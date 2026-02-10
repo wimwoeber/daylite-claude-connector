@@ -8,55 +8,53 @@ export function registerSearchTools(server: McpServer, client: DayliteRestClient
     "Übergreifend in Daylite suchen (Kontakte, Firmen, Opportunities, Projekte)",
     {
       query: z.string().describe("Suchbegriff"),
-      type: z.enum(["contacts", "companies", "opportunities", "projects", "all"]).optional()
-        .describe("Typ einschränken (Standard: all)"),
+      type: z.enum(["contacts", "companies", "opportunities", "projects", "all"]).optional().describe("Typ einschränken (Standard: all)"),
       limit: z.number().optional().describe("Maximale Ergebnisse pro Typ (Standard: 10)"),
     },
     async ({ query, type, limit }) => {
       try {
+        const searchType = type || "all";
         const maxResults = limit || 10;
-        const searchTypes = type === "all" || !type 
-          ? ["contacts", "companies", "opportunities", "projects"] 
-          : [type];
-
         const results: string[] = [];
+        
+        const endpoints = searchType === "all" 
+          ? ["contacts", "companies", "opportunities", "projects"]
+          : [searchType];
 
-        for (const searchType of searchTypes) {
+        for (const endpoint of endpoints) {
           try {
-            // Try the search endpoint first
-            const params: Record<string, string> = {
-              q: query,
-              limit: String(maxResults),
-            };
-            const data = await client.get(`/${searchType}`, params);
-            const items = Array.isArray(data) ? data : data?.[searchType] || data?.data || [];
+            // Try search endpoint first
+            const params: Record<string, string> = { q: query };
+            if (maxResults) params.limit = String(maxResults);
             
-            if (items.length > 0) {
-              const formatted = items.map((item: any) => {
-                const parts: string[] = [`  ID: ${item.id}`];
-                if (item.name) parts.push(`  Name: ${item.name}`);
-                if (item.first_name || item.last_name) {
-                  parts.push(`  Name: ${[item.first_name, item.last_name].filter(Boolean).join(" ")}`);
-                }
-                if (item.title) parts.push(`  Titel: ${item.title}`);
-                if (item.emails?.length > 0) {
-                  parts.push(`  E-Mail: ${item.emails.map((e: any) => e.address || e).join(", ")}`);
-                }
-                if (item.status) parts.push(`  Status: ${item.status}`);
-                if (item.amount || item.value) parts.push(`  Wert: ${item.amount || item.value}`);
-                return parts.join("\n");
-              }).join("\n  ---\n");
-              
-              const typeLabels: Record<string, string> = {
-                contacts: "Kontakte",
-                companies: "Firmen",
-                opportunities: "Verkaufschancen",
-                projects: "Projekte",
-              };
-              results.push(`### ${typeLabels[searchType] || searchType} (${items.length}):\n${formatted}`);
+            let data;
+            try {
+              data = await client.get(`/search/${endpoint}`, params);
+            } catch {
+              // Fallback: try query param on list endpoint
+              try {
+                data = await client.get(`/${endpoint}`, { search: query, limit: String(maxResults) });
+              } catch {
+                data = await client.get(`/${endpoint}`, { q: query, limit: String(maxResults) });
+              }
             }
-          } catch {
-            // Skip types that fail (e.g., search not supported for that type)
+            
+            const items = Array.isArray(data) ? data : data?.[endpoint] || data?.data || [];
+            if (items.length > 0) {
+              const label = endpoint === "contacts" ? "Kontakte" : 
+                           endpoint === "companies" ? "Firmen" :
+                           endpoint === "opportunities" ? "Opportunities" : "Projekte";
+              results.push(`### ${label} (${items.length}):`);
+              for (const item of items.slice(0, maxResults)) {
+                const id = item.ID || item.id;
+                const name = item.Name || item.name || item.FullName || item.full_name || 
+                            [item.FirstName || item.first_name, item.LastName || item.last_name].filter(Boolean).join(" ");
+                const idStr = id ? `ID: ${id}` : "";
+                results.push(`  ${idStr}\n  Name: ${name || "(ohne Name)"}\n  ---`);
+              }
+            }
+          } catch (e: any) {
+            results.push(`### ${endpoint}: Fehler - ${e.message}`);
           }
         }
 
@@ -64,7 +62,7 @@ export function registerSearchTools(server: McpServer, client: DayliteRestClient
           return { content: [{ type: "text", text: `Keine Ergebnisse für "${query}" gefunden.` }] };
         }
 
-        return { content: [{ type: "text", text: `Suchergebnisse für "${query}":\n\n${results.join("\n\n")}` }] };
+        return { content: [{ type: "text", text: `Suchergebnisse für "${query}":\n\n${results.join("\n")}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
@@ -78,18 +76,46 @@ export function registerSearchTools(server: McpServer, client: DayliteRestClient
     async () => {
       try {
         const data = await client.get("/pipelines");
-        const pipelines = Array.isArray(data) ? data : data?.pipelines || data?.data || [];
+        const pipelines = Array.isArray(data) ? data : data?.pipelines || data?.Pipelines || data?.data || [];
         if (pipelines.length === 0) {
           return { content: [{ type: "text", text: "Keine Pipelines gefunden." }] };
         }
         const text = pipelines.map((p: any) => {
-          const parts = [`ID: ${p.id}`, `Name: ${p.name}`];
-          if (p.stages?.length > 0) {
-            parts.push(`Stufen: ${p.stages.map((s: any) => `${s.name} (ID: ${s.id})`).join(" → ")}`);
+          const parts: string[] = [];
+          const id = p.ID || p.id;
+          if (id) parts.push(`ID: ${id}`);
+          const name = p.Name || p.name;
+          if (name) parts.push(`Name: ${name}`);
+          // Pipeline stages
+          const stages = p.Stages || p.stages || p.PipelineStages || p.pipeline_stages;
+          if (stages?.length > 0) {
+            parts.push(`Stufen:`);
+            for (const s of stages) {
+              const sId = s.ID || s.id;
+              const sName = s.Name || s.name;
+              parts.push(`  - ${sName || "?"} (ID: ${sId || "?"})`);
+            }
           }
           return parts.join("\n");
         }).join("\n---\n");
         return { content: [{ type: "text", text: `${pipelines.length} Pipeline(s):\n\n${text}` }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // Debug tool to see raw API response structure
+  server.tool(
+    "daylite_debug_raw",
+    "Debug: Zeigt die rohe API-Antwort für einen Endpoint (für Troubleshooting)",
+    {
+      endpoint: z.string().describe("API-Endpoint z.B. /companies, /contacts/123"),
+    },
+    async ({ endpoint }) => {
+      try {
+        const data = await client.get(endpoint, { limit: "2" });
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2).slice(0, 8000) }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }

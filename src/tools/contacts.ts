@@ -4,30 +4,67 @@ import { DayliteRestClient } from "../daylite-rest-client.js";
 
 function formatContact(c: any): string {
   const parts: string[] = [];
-  parts.push(`ID: ${c.id}`);
-  if (c.first_name || c.last_name) {
-    parts.push(`Name: ${[c.first_name, c.last_name].filter(Boolean).join(" ")}`);
+  // Daylite API uses PascalCase field names
+  const id = c.ID || c.id;
+  if (id) parts.push(`ID: ${id}`);
+  const firstName = c.FirstName || c.first_name;
+  const lastName = c.LastName || c.last_name;
+  const fullName = c.FullName || c.full_name;
+  if (fullName) {
+    parts.push(`Name: ${fullName}`);
+  } else if (firstName || lastName) {
+    parts.push(`Name: ${[firstName, lastName].filter(Boolean).join(" ")}`);
   }
-  if (c.company) parts.push(`Firma: ${typeof c.company === "object" ? c.company.name : c.company}`);
-  if (c.title) parts.push(`Titel: ${c.title}`);
-  if (c.emails?.length > 0) {
-    parts.push(`E-Mail: ${c.emails.map((e: any) => e.address || e).join(", ")}`);
-  }
-  if (c.phones?.length > 0) {
-    parts.push(`Telefon: ${c.phones.map((p: any) => p.number || p).join(", ")}`);
-  }
-  if (c.addresses?.length > 0) {
-    const addr = c.addresses[0];
-    if (typeof addr === "object") {
-      parts.push(`Adresse: ${[addr.street, addr.zip || addr.postal_code, addr.city].filter(Boolean).join(", ")}`);
+  const prefix = c.Prefix || c.prefix;
+  if (prefix) parts.push(`Anrede: ${prefix}`);
+  const title = c.Title || c.title;
+  if (title) parts.push(`Titel: ${title}`);
+  const category = c.Category || c.category;
+  if (category) parts.push(`Kategorie: ${category}`);
+  const details = c.Details || c.details;
+  if (details) parts.push(`Details: ${details}`);
+  // Company info (if available as sub-object)
+  const company = c.Company || c.company;
+  if (company) {
+    if (typeof company === "object") {
+      parts.push(`Firma: ${company.Name || company.name || JSON.stringify(company)}`);
+    } else {
+      parts.push(`Firma: ${company}`);
     }
   }
-  if (c.keywords?.length > 0) {
-    parts.push(`Schlagwörter: ${c.keywords.map((k: any) => k.name || k).join(", ")}`);
+  // Email sub-objects
+  const emails = c.Emails || c.emails;
+  if (emails?.length > 0) {
+    parts.push(`E-Mail: ${emails.map((e: any) => e.Address || e.address || e).join(", ")}`);
   }
-  if (c.categories?.length > 0) {
-    parts.push(`Kategorien: ${c.categories.map((k: any) => k.name || k).join(", ")}`);
+  // Phone sub-objects
+  const phones = c.Phones || c.phones || c.PhoneNumbers || c.phoneNumbers;
+  if (phones?.length > 0) {
+    parts.push(`Telefon: ${phones.map((p: any) => p.Number || p.number || p).join(", ")}`);
   }
+  // URL sub-objects
+  const urls = c.Urls || c.urls || c.URLs;
+  if (urls?.length > 0) {
+    parts.push(`URL: ${urls.map((u: any) => u.Url || u.Address || u.url || u.address || u).join(", ")}`);
+  }
+  // Address sub-objects
+  const addresses = c.Addresses || c.addresses;
+  if (addresses?.length > 0) {
+    const addr = addresses[0];
+    if (typeof addr === "object") {
+      const street = addr.Street || addr.street;
+      const zip = addr.PostalCode || addr.postal_code || addr.zip;
+      const city = addr.City || addr.city;
+      parts.push(`Adresse: ${[street, zip, city].filter(Boolean).join(", ")}`);
+    }
+  }
+  // Keywords
+  const keywords = c.Keywords || c.keywords;
+  if (keywords?.length > 0) {
+    parts.push(`Schlagwörter: ${keywords.map((k: any) => k.Name || k.name || k).join(", ")}`);
+  }
+  const self = c.Self || c.self;
+  if (self) parts.push(`Self: ${self}`);
   return parts.join("\n");
 }
 
@@ -45,7 +82,7 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
         if (limit) params.limit = String(limit);
         if (offset) params.offset = String(offset);
         const data = await client.get("/contacts", params);
-        const contacts = Array.isArray(data) ? data : data?.contacts || data?.data || [];
+        const contacts = Array.isArray(data) ? data : data?.contacts || data?.Contacts || data?.data || [];
         if (contacts.length === 0) {
           return { content: [{ type: "text", text: "Keine Kontakte gefunden." }] };
         }
@@ -86,12 +123,11 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
     },
     async ({ first_name, last_name, company_name, title, email, phone }) => {
       try {
-        const body: any = { last_name };
-        if (first_name) body.first_name = first_name;
-        if (company_name) body.company = { name: company_name };
-        if (title) body.title = title;
-        if (email) body.emails = [{ address: email, label: "work" }];
-        if (phone) body.phones = [{ number: phone, label: "work" }];
+        const body: any = { LastName: last_name };
+        if (first_name) body.FirstName = first_name;
+        if (title) body.Title = title;
+        if (email) body.Emails = [{ Address: email, Label: "work" }];
+        if (phone) body.Phones = [{ Number: phone, Label: "work" }];
         const data = await client.post("/contacts", body);
         return { content: [{ type: "text", text: `Kontakt erstellt:\n${formatContact(data)}` }] };
       } catch (error: any) {
@@ -114,11 +150,11 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
     async ({ id, first_name, last_name, title, email, phone }) => {
       try {
         const body: any = {};
-        if (first_name) body.first_name = first_name;
-        if (last_name) body.last_name = last_name;
-        if (title) body.title = title;
-        if (email) body.emails = [{ address: email, label: "work" }];
-        if (phone) body.phones = [{ number: phone, label: "work" }];
+        if (first_name) body.FirstName = first_name;
+        if (last_name) body.LastName = last_name;
+        if (title) body.Title = title;
+        if (email) body.Emails = [{ Address: email, Label: "work" }];
+        if (phone) body.Phones = [{ Number: phone, Label: "work" }];
         const data = await client.put(`/contacts/${id}`, body);
         return { content: [{ type: "text", text: `Kontakt aktualisiert:\n${formatContact(data)}` }] };
       } catch (error: any) {

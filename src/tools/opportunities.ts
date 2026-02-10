@@ -4,34 +4,47 @@ import { DayliteRestClient } from "../daylite-rest-client.js";
 
 function formatOpportunity(o: any): string {
   const parts: string[] = [];
-  parts.push(`ID: ${o.id}`);
-  if (o.name || o.title) parts.push(`Name: ${o.name || o.title}`);
-  if (o.amount || o.value) parts.push(`Wert: ${o.amount || o.value}`);
-  if (o.pipeline) {
-    const pName = typeof o.pipeline === "object" ? o.pipeline.name : o.pipeline;
-    parts.push(`Pipeline: ${pName}`);
+  const id = o.ID || o.id;
+  if (id) parts.push(`ID: ${id}`);
+  const name = o.Name || o.name;
+  if (name) parts.push(`Name: ${name}`);
+  const state = o.State || o.state || o.Status || o.status;
+  if (state) parts.push(`Status: ${state}`);
+  const probability = o.Probability || o.probability;
+  if (probability !== undefined) parts.push(`Wahrscheinlichkeit: ${probability}%`);
+  const amount = o.Amount || o.amount;
+  if (amount !== undefined) parts.push(`Betrag: ${amount}€`);
+  const details = o.Details || o.details;
+  if (details) parts.push(`Details: ${details}`);
+  const priority = o.Priority || o.priority;
+  if (priority !== undefined) parts.push(`Priorität: ${priority}`);
+  const category = o.Category || o.category;
+  if (category) parts.push(`Kategorie: ${category}`);
+  const start = o.Start || o.start;
+  if (start) parts.push(`Start: ${start}`);
+  const end = o.End || o.end;
+  if (end) parts.push(`Ende: ${end}`);
+  const forecasted = o.Forecasted || o.forecasted;
+  if (forecasted) parts.push(`Prognose: ${forecasted}`);
+  // Pipeline info
+  const pipeline = o.Pipeline || o.pipeline;
+  if (pipeline) {
+    if (typeof pipeline === "object") {
+      parts.push(`Pipeline: ${pipeline.Name || pipeline.name || JSON.stringify(pipeline)}`);
+    } else {
+      parts.push(`Pipeline: ${pipeline}`);
+    }
   }
-  if (o.stage) {
-    const sName = typeof o.stage === "object" ? o.stage.name : o.stage;
-    parts.push(`Stufe: ${sName}`);
+  const stage = o.Stage || o.stage || o.PipelineStage || o.pipelineStage;
+  if (stage) {
+    if (typeof stage === "object") {
+      parts.push(`Stufe: ${stage.Name || stage.name || JSON.stringify(stage)}`);
+    } else {
+      parts.push(`Stufe: ${stage}`);
+    }
   }
-  if (o.status) parts.push(`Status: ${o.status}`);
-  if (o.probability) parts.push(`Wahrscheinlichkeit: ${o.probability}%`);
-  if (o.close_date || o.expected_close) parts.push(`Abschlussdatum: ${o.close_date || o.expected_close}`);
-  if (o.contact) {
-    const cName = typeof o.contact === "object" 
-      ? [o.contact.first_name, o.contact.last_name].filter(Boolean).join(" ") 
-      : o.contact;
-    parts.push(`Kontakt: ${cName}`);
-  }
-  if (o.company) {
-    const coName = typeof o.company === "object" ? o.company.name : o.company;
-    parts.push(`Firma: ${coName}`);
-  }
-  if (o.keywords?.length > 0) {
-    parts.push(`Schlagwörter: ${o.keywords.map((k: any) => k.name || k).join(", ")}`);
-  }
-  if (o.details || o.description) parts.push(`Details: ${o.details || o.description}`);
+  const self = o.Self || o.self;
+  if (self) parts.push(`Self: ${self}`);
   return parts.join("\n");
 }
 
@@ -49,12 +62,12 @@ export function registerOpportunityTools(server: McpServer, client: DayliteRestC
         if (limit) params.limit = String(limit);
         if (offset) params.offset = String(offset);
         const data = await client.get("/opportunities", params);
-        const opps = Array.isArray(data) ? data : data?.opportunities || data?.data || [];
-        if (opps.length === 0) {
+        const opportunities = Array.isArray(data) ? data : data?.opportunities || data?.Opportunities || data?.data || [];
+        if (opportunities.length === 0) {
           return { content: [{ type: "text", text: "Keine Verkaufschancen gefunden." }] };
         }
-        const text = opps.map(formatOpportunity).join("\n---\n");
-        return { content: [{ type: "text", text: `${opps.length} Verkaufschance(n):\n\n${text}` }] };
+        const text = opportunities.map(formatOpportunity).join("\n---\n");
+        return { content: [{ type: "text", text: `${opportunities.length} Verkaufschance(n):\n\n${text}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
@@ -91,13 +104,11 @@ export function registerOpportunityTools(server: McpServer, client: DayliteRestC
     },
     async ({ name, amount, pipeline_id, stage_id, contact_id, company_id, details }) => {
       try {
-        const body: any = { name };
-        if (amount !== undefined) body.amount = amount;
-        if (pipeline_id) body.pipeline = { id: pipeline_id };
-        if (stage_id) body.stage = { id: stage_id };
-        if (contact_id) body.contact = { id: contact_id };
-        if (company_id) body.company = { id: company_id };
-        if (details) body.details = details;
+        const body: any = { Name: name };
+        if (amount !== undefined) body.Amount = amount;
+        if (details) body.Details = details;
+        if (pipeline_id) body.Pipeline = pipeline_id;
+        if (stage_id) body.PipelineStage = stage_id;
         const data = await client.post("/opportunities", body);
         return { content: [{ type: "text", text: `Verkaufschance erstellt:\n${formatOpportunity(data)}` }] };
       } catch (error: any) {
@@ -114,17 +125,17 @@ export function registerOpportunityTools(server: McpServer, client: DayliteRestC
       name: z.string().optional().describe("Neuer Name"),
       amount: z.number().optional().describe("Neuer Wert"),
       stage_id: z.number().optional().describe("Neue Stufen-ID"),
-      status: z.string().optional().describe("Neuer Status (z.B. won, lost, pending)"),
       details: z.string().optional().describe("Neue Details"),
+      status: z.string().optional().describe("Neuer Status (z.B. won, lost, pending)"),
     },
-    async ({ id, name, amount, stage_id, status, details }) => {
+    async ({ id, name, amount, stage_id, details, status }) => {
       try {
         const body: any = {};
-        if (name) body.name = name;
-        if (amount !== undefined) body.amount = amount;
-        if (stage_id) body.stage = { id: stage_id };
-        if (status) body.status = status;
-        if (details) body.details = details;
+        if (name) body.Name = name;
+        if (amount !== undefined) body.Amount = amount;
+        if (stage_id) body.PipelineStage = stage_id;
+        if (details) body.Details = details;
+        if (status) body.State = status;
         const data = await client.put(`/opportunities/${id}`, body);
         return { content: [{ type: "text", text: `Verkaufschance aktualisiert:\n${formatOpportunity(data)}` }] };
       } catch (error: any) {

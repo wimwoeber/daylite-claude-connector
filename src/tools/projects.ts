@@ -4,33 +4,43 @@ import { DayliteRestClient } from "../daylite-rest-client.js";
 
 function formatProject(p: any): string {
   const parts: string[] = [];
-  parts.push(`ID: ${p.id}`);
-  if (p.name || p.title) parts.push(`Name: ${p.name || p.title}`);
-  if (p.status) parts.push(`Status: ${p.status}`);
-  if (p.pipeline) {
-    const pName = typeof p.pipeline === "object" ? p.pipeline.name : p.pipeline;
-    parts.push(`Pipeline: ${pName}`);
+  const id = p.ID || p.id;
+  if (id) parts.push(`ID: ${id}`);
+  const name = p.Name || p.name;
+  if (name) parts.push(`Name: ${name}`);
+  const status = p.Status || p.status;
+  if (status) parts.push(`Status: ${status}`);
+  const priority = p.Priority || p.priority;
+  if (priority !== undefined) parts.push(`Priorität: ${priority}`);
+  const details = p.Details || p.details;
+  if (details) parts.push(`Details: ${details}`);
+  const category = p.Category || p.category;
+  if (category) parts.push(`Kategorie: ${category}`);
+  const started = p.Started || p.started || p.Start || p.start;
+  if (started) parts.push(`Start: ${started}`);
+  const due = p.Due || p.due;
+  if (due) parts.push(`Fällig: ${due}`);
+  const completed = p.Completed || p.completed;
+  if (completed) parts.push(`Abgeschlossen: ${completed}`);
+  // Pipeline info
+  const pipeline = p.Pipeline || p.pipeline;
+  if (pipeline) {
+    if (typeof pipeline === "object") {
+      parts.push(`Pipeline: ${pipeline.Name || pipeline.name || JSON.stringify(pipeline)}`);
+    } else {
+      parts.push(`Pipeline: ${pipeline}`);
+    }
   }
-  if (p.stage) {
-    const sName = typeof p.stage === "object" ? p.stage.name : p.stage;
-    parts.push(`Stufe: ${sName}`);
+  const stage = p.Stage || p.stage || p.PipelineStage || p.pipelineStage;
+  if (stage) {
+    if (typeof stage === "object") {
+      parts.push(`Stufe: ${stage.Name || stage.name || JSON.stringify(stage)}`);
+    } else {
+      parts.push(`Stufe: ${stage}`);
+    }
   }
-  if (p.start_date) parts.push(`Startdatum: ${p.start_date}`);
-  if (p.end_date || p.due_date) parts.push(`Enddatum: ${p.end_date || p.due_date}`);
-  if (p.contact) {
-    const cName = typeof p.contact === "object" 
-      ? [p.contact.first_name, p.contact.last_name].filter(Boolean).join(" ") 
-      : p.contact;
-    parts.push(`Kontakt: ${cName}`);
-  }
-  if (p.company) {
-    const coName = typeof p.company === "object" ? p.company.name : p.company;
-    parts.push(`Firma: ${coName}`);
-  }
-  if (p.keywords?.length > 0) {
-    parts.push(`Schlagwörter: ${p.keywords.map((k: any) => k.name || k).join(", ")}`);
-  }
-  if (p.details || p.description) parts.push(`Details: ${p.details || p.description}`);
+  const self = p.Self || p.self;
+  if (self) parts.push(`Self: ${self}`);
   return parts.join("\n");
 }
 
@@ -48,7 +58,7 @@ export function registerProjectTools(server: McpServer, client: DayliteRestClien
         if (limit) params.limit = String(limit);
         if (offset) params.offset = String(offset);
         const data = await client.get("/projects", params);
-        const projects = Array.isArray(data) ? data : data?.projects || data?.data || [];
+        const projects = Array.isArray(data) ? data : data?.projects || data?.Projects || data?.data || [];
         if (projects.length === 0) {
           return { content: [{ type: "text", text: "Keine Projekte gefunden." }] };
         }
@@ -91,14 +101,12 @@ export function registerProjectTools(server: McpServer, client: DayliteRestClien
     },
     async ({ name, pipeline_id, stage_id, contact_id, company_id, details, start_date, end_date }) => {
       try {
-        const body: any = { name };
-        if (pipeline_id) body.pipeline = { id: pipeline_id };
-        if (stage_id) body.stage = { id: stage_id };
-        if (contact_id) body.contact = { id: contact_id };
-        if (company_id) body.company = { id: company_id };
-        if (details) body.details = details;
-        if (start_date) body.start_date = start_date;
-        if (end_date) body.end_date = end_date;
+        const body: any = { Name: name };
+        if (details) body.Details = details;
+        if (start_date) body.Started = start_date;
+        if (end_date) body.Due = end_date;
+        if (pipeline_id) body.Pipeline = pipeline_id;
+        if (stage_id) body.PipelineStage = stage_id;
         const data = await client.post("/projects", body);
         return { content: [{ type: "text", text: `Projekt erstellt:\n${formatProject(data)}` }] };
       } catch (error: any) {
@@ -114,16 +122,16 @@ export function registerProjectTools(server: McpServer, client: DayliteRestClien
       id: z.number().describe("Die Daylite Projekt-ID"),
       name: z.string().optional().describe("Neuer Projektname"),
       stage_id: z.number().optional().describe("Neue Stufen-ID"),
-      status: z.string().optional().describe("Neuer Status"),
       details: z.string().optional().describe("Neue Details"),
+      status: z.string().optional().describe("Neuer Status"),
     },
-    async ({ id, name, stage_id, status, details }) => {
+    async ({ id, name, stage_id, details, status }) => {
       try {
         const body: any = {};
-        if (name) body.name = name;
-        if (stage_id) body.stage = { id: stage_id };
-        if (status) body.status = status;
-        if (details) body.details = details;
+        if (name) body.Name = name;
+        if (stage_id) body.PipelineStage = stage_id;
+        if (details) body.Details = details;
+        if (status) body.Status = status;
         const data = await client.put(`/projects/${id}`, body);
         return { content: [{ type: "text", text: `Projekt aktualisiert:\n${formatProject(data)}` }] };
       } catch (error: any) {
