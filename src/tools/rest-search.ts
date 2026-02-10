@@ -2,6 +2,33 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { DayliteRestClient } from "../daylite-rest-client.js";
 
+/** Extract numeric ID from self URL like /v1/contacts/1000 */
+function extractId(self: string | undefined): string | null {
+  if (!self) return null;
+  const parts = self.split("/");
+  return parts[parts.length - 1] || null;
+}
+
+/** Get display name from any entity */
+function getDisplayName(item: any): string {
+  return item.name || item.full_name || [item.first_name, item.last_name].filter(Boolean).join(" ") || "(ohne Name)";
+}
+
+/** Check if an item matches the search query (client-side filtering) */
+function matchesQuery(item: any, query: string): boolean {
+  const q = query.toLowerCase();
+  const name = getDisplayName(item).toLowerCase();
+  if (name.includes(q)) return true;
+  // Also check category and keywords
+  if (item.category && item.category.toLowerCase().includes(q)) return true;
+  if (item.keywords) {
+    for (const kw of item.keywords) {
+      if ((typeof kw === "string" ? kw : kw.name || "").toLowerCase().includes(q)) return true;
+    }
+  }
+  return false;
+}
+
 export function registerSearchTools(server: McpServer, client: DayliteRestClient) {
   server.tool(
     "daylite_search",
@@ -23,34 +50,21 @@ export function registerSearchTools(server: McpServer, client: DayliteRestClient
 
         for (const endpoint of endpoints) {
           try {
-            // Try search endpoint first
-            const params: Record<string, string> = { q: query };
-            if (maxResults) params.limit = String(maxResults);
+            // Fetch all items and filter client-side
+            // (Daylite REST API has no server-side search)
+            const data = await client.get(`/${endpoint}`);
+            const items = Array.isArray(data) ? data : data?.data || [];
+            const filtered = items.filter((item: any) => matchesQuery(item, query));
             
-            let data;
-            try {
-              data = await client.get(`/search/${endpoint}`, params);
-            } catch {
-              // Fallback: try query param on list endpoint
-              try {
-                data = await client.get(`/${endpoint}`, { search: query, limit: String(maxResults) });
-              } catch {
-                data = await client.get(`/${endpoint}`, { q: query, limit: String(maxResults) });
-              }
-            }
-            
-            const items = Array.isArray(data) ? data : data?.[endpoint] || data?.data || [];
-            if (items.length > 0) {
+            if (filtered.length > 0) {
               const label = endpoint === "contacts" ? "Kontakte" : 
                            endpoint === "companies" ? "Firmen" :
                            endpoint === "opportunities" ? "Opportunities" : "Projekte";
-              results.push(`### ${label} (${items.length}):`);
-              for (const item of items.slice(0, maxResults)) {
-                const id = item.ID || item.id;
-                const name = item.Name || item.name || item.FullName || item.full_name || 
-                            [item.FirstName || item.first_name, item.LastName || item.last_name].filter(Boolean).join(" ");
-                const idStr = id ? `ID: ${id}` : "";
-                results.push(`  ${idStr}\n  Name: ${name || "(ohne Name)"}\n  ---`);
+              results.push(`### ${label} (${filtered.length}):`);
+              for (const item of filtered.slice(0, maxResults)) {
+                const id = extractId(item.self);
+                const name = getDisplayName(item);
+                results.push(`  ID: ${id || "?"}\n  Name: ${name}\n  ---`);
               }
             }
           } catch (e: any) {
@@ -76,24 +90,21 @@ export function registerSearchTools(server: McpServer, client: DayliteRestClient
     async () => {
       try {
         const data = await client.get("/pipelines");
-        const pipelines = Array.isArray(data) ? data : data?.pipelines || data?.Pipelines || data?.data || [];
+        const pipelines = Array.isArray(data) ? data : data?.data || [];
         if (pipelines.length === 0) {
           return { content: [{ type: "text", text: "Keine Pipelines gefunden." }] };
         }
         const text = pipelines.map((p: any) => {
           const parts: string[] = [];
-          const id = p.ID || p.id;
+          const id = extractId(p.self);
           if (id) parts.push(`ID: ${id}`);
-          const name = p.Name || p.name;
-          if (name) parts.push(`Name: ${name}`);
-          // Pipeline stages
-          const stages = p.Stages || p.stages || p.PipelineStages || p.pipeline_stages;
-          if (stages?.length > 0) {
+          if (p.name) parts.push(`Name: ${p.name}`);
+          // Pipeline stages (if available in detail view)
+          if (p.stages?.length > 0) {
             parts.push(`Stufen:`);
-            for (const s of stages) {
-              const sId = s.ID || s.id;
-              const sName = s.Name || s.name;
-              parts.push(`  - ${sName || "?"} (ID: ${sId || "?"})`);
+            for (const s of p.stages) {
+              const sId = extractId(s.self);
+              parts.push(`  - ${s.name || "?"} (ID: ${sId || "?"})`);
             }
           }
           return parts.join("\n");

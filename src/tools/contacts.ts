@@ -2,69 +2,51 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { DayliteRestClient } from "../daylite-rest-client.js";
 
+/** Extract numeric ID from self URL like /v1/contacts/1000 */
+function extractId(self: string | undefined): string | null {
+  if (!self) return null;
+  const parts = self.split("/");
+  return parts[parts.length - 1] || null;
+}
+
 function formatContact(c: any): string {
   const parts: string[] = [];
-  // Daylite API uses PascalCase field names
-  const id = c.ID || c.id || c.objectID || c.object_id || c.primaryKeyValue;
+  const id = extractId(c.self);
   if (id) parts.push(`ID: ${id}`);
-  const firstName = c.FirstName || c.first_name || c.firstName;
-  const lastName = c.LastName || c.last_name || c.lastName;
-  const fullName = c.FullName || c.full_name || c.fullName || c.cachedName || c.name || c.Name;
-  if (fullName) {
-    parts.push(`Name: ${fullName}`);
-  } else if (firstName || lastName) {
-    parts.push(`Name: ${[firstName, lastName].filter(Boolean).join(" ")}`);
+  const name = c.full_name || [c.first_name, c.last_name].filter(Boolean).join(" ");
+  if (name) parts.push(`Name: ${name}`);
+  if (c.individual_salutation) parts.push(`Anrede: ${c.individual_salutation}`);
+  if (c.category) parts.push(`Kategorie: ${c.category}`);
+  if (c.birthday) parts.push(`Geburtstag: ${c.birthday}`);
+  // Email addresses
+  if (c.email_addresses?.length > 0) {
+    parts.push(`E-Mail: ${c.email_addresses.map((e: any) => `${e.address || e} (${e.label || ""})`).join(", ")}`);
   }
-  const prefix = c.Prefix || c.prefix;
-  if (prefix) parts.push(`Anrede: ${prefix}`);
-  const title = c.Title || c.title;
-  if (title) parts.push(`Titel: ${title}`);
-  const category = c.Category || c.category;
-  if (category) parts.push(`Kategorie: ${category}`);
-  const details = c.Details || c.details;
-  if (details) parts.push(`Details: ${details}`);
-  // Company info (if available as sub-object)
-  const company = c.Company || c.company;
-  if (company) {
-    if (typeof company === "object") {
-      parts.push(`Firma: ${company.Name || company.name || JSON.stringify(company)}`);
-    } else {
-      parts.push(`Firma: ${company}`);
-    }
+  // Phone numbers
+  if (c.phone_numbers?.length > 0) {
+    parts.push(`Telefon: ${c.phone_numbers.map((p: any) => `${p.number || p} (${p.label || ""})`).join(", ")}`);
   }
-  // Email sub-objects
-  const emails = c.Emails || c.emails;
-  if (emails?.length > 0) {
-    parts.push(`E-Mail: ${emails.map((e: any) => e.Address || e.address || e).join(", ")}`);
+  // URLs
+  if (c.urls?.length > 0) {
+    parts.push(`URL: ${c.urls.map((u: any) => u.url || u.address || u).join(", ")}`);
   }
-  // Phone sub-objects
-  const phones = c.Phones || c.phones || c.PhoneNumbers || c.phoneNumbers;
-  if (phones?.length > 0) {
-    parts.push(`Telefon: ${phones.map((p: any) => p.Number || p.number || p).join(", ")}`);
-  }
-  // URL sub-objects
-  const urls = c.Urls || c.urls || c.URLs;
-  if (urls?.length > 0) {
-    parts.push(`URL: ${urls.map((u: any) => u.Url || u.Address || u.url || u.address || u).join(", ")}`);
-  }
-  // Address sub-objects
-  const addresses = c.Addresses || c.addresses;
-  if (addresses?.length > 0) {
-    const addr = addresses[0];
+  // Address
+  if (c.addresses?.length > 0) {
+    const addr = c.addresses[0];
     if (typeof addr === "object") {
-      const street = addr.Street || addr.street;
-      const zip = addr.PostalCode || addr.postal_code || addr.zip;
-      const city = addr.City || addr.city;
-      parts.push(`Adresse: ${[street, zip, city].filter(Boolean).join(", ")}`);
+      parts.push(`Adresse: ${[addr.street, addr.postal_code, addr.city].filter(Boolean).join(", ")}`);
     }
+  }
+  // Companies
+  if (c.companies?.length > 0) {
+    parts.push(`Firmen: ${c.companies.map((co: any) => `${co.company} (${co.role || ""})`).join(", ")}`);
   }
   // Keywords
-  const keywords = c.Keywords || c.keywords;
-  if (keywords?.length > 0) {
-    parts.push(`Schlagwörter: ${keywords.map((k: any) => k.Name || k.name || k).join(", ")}`);
+  if (c.keywords?.length > 0) {
+    parts.push(`Schlagwörter: ${c.keywords.join(", ")}`);
   }
-  const self = c.Self || c.self;
-  if (self) parts.push(`Self: ${self}`);
+  if (c.flagged) parts.push(`⭐ Markiert`);
+  if (c.owner) parts.push(`Besitzer: ${c.owner}`);
   return parts.join("\n");
 }
 
@@ -82,33 +64,13 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
         if (limit) params.limit = String(limit);
         if (offset) params.offset = String(offset);
         const data = await client.get("/contacts", params);
-        
-        // Debug: show raw response structure
-        let debugInfo = "";
-        if (data) {
-          const isArr = Array.isArray(data);
-          debugInfo += `[DEBUG] Response is array: ${isArr}\n`;
-          if (!isArr) {
-            debugInfo += `[DEBUG] Top-level keys: ${Object.keys(data).join(", ")}\n`;
-          }
-        }
-        
-        const contacts = Array.isArray(data) ? data : data?.contacts || data?.Contacts || data?.data || [];
-        
-        // Debug: show first contact raw JSON
-        if (contacts.length > 0) {
-          debugInfo += `[DEBUG] First contact keys: ${Object.keys(contacts[0]).join(", ")}\n`;
-          debugInfo += `[DEBUG] First contact RAW:\n${JSON.stringify(contacts[0], null, 2).slice(0, 2000)}\n`;
-          if (contacts.length > 1) {
-            debugInfo += `[DEBUG] Second contact RAW:\n${JSON.stringify(contacts[1], null, 2).slice(0, 1000)}\n`;
-          }
-        }
-        
+        const contacts = Array.isArray(data) ? data : data?.data || [];
         if (contacts.length === 0) {
-          return { content: [{ type: "text", text: `${debugInfo}\nKeine Kontakte gefunden.` }] };
+          return { content: [{ type: "text", text: "Keine Kontakte gefunden." }] };
         }
-        const text = contacts.slice(0, 5).map(formatContact).join("\n---\n");
-        return { content: [{ type: "text", text: `${debugInfo}\n${contacts.length} Kontakt(e) (zeige erste 5):\n\n${text}` }] };
+        const display = limit ? contacts : contacts.slice(0, 50);
+        const text = display.map(formatContact).join("\n---\n");
+        return { content: [{ type: "text", text: `${contacts.length} Kontakt(e)${display.length < contacts.length ? ` (zeige erste ${display.length})` : ""}:\n\n${text}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
@@ -144,11 +106,11 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
     },
     async ({ first_name, last_name, company_name, title, email, phone }) => {
       try {
-        const body: any = { LastName: last_name };
-        if (first_name) body.FirstName = first_name;
-        if (title) body.Title = title;
-        if (email) body.Emails = [{ Address: email, Label: "work" }];
-        if (phone) body.Phones = [{ Number: phone, Label: "work" }];
+        const body: any = { last_name };
+        if (first_name) body.first_name = first_name;
+        if (title) body.individual_salutation = title;
+        if (email) body.email_addresses = [{ address: email, label: "work" }];
+        if (phone) body.phone_numbers = [{ number: phone, label: "work" }];
         const data = await client.post("/contacts", body);
         return { content: [{ type: "text", text: `Kontakt erstellt:\n${formatContact(data)}` }] };
       } catch (error: any) {
@@ -171,11 +133,11 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
     async ({ id, first_name, last_name, title, email, phone }) => {
       try {
         const body: any = {};
-        if (first_name) body.FirstName = first_name;
-        if (last_name) body.LastName = last_name;
-        if (title) body.Title = title;
-        if (email) body.Emails = [{ Address: email, Label: "work" }];
-        if (phone) body.Phones = [{ Number: phone, Label: "work" }];
+        if (first_name) body.first_name = first_name;
+        if (last_name) body.last_name = last_name;
+        if (title) body.individual_salutation = title;
+        if (email) body.email_addresses = [{ address: email, label: "work" }];
+        if (phone) body.phone_numbers = [{ number: phone, label: "work" }];
         const data = await client.put(`/contacts/${id}`, body);
         return { content: [{ type: "text", text: `Kontakt aktualisiert:\n${formatContact(data)}` }] };
       } catch (error: any) {
