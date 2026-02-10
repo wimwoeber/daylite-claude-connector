@@ -2,12 +2,13 @@
  * Daylite REST API Client
  * Uses personal token (refresh_token) for authentication.
  * Base URL: https://api.marketcircle.net/v1/
- * 
- * Token persistence: After each refresh, the new refresh_token is saved
- * to ~/.daylite-refresh-token so it survives process restarts.
+ *
+ * Multi-device support: If a persisted (rotated) token fails,
+ * automatically falls back to the original token from config.
+ * This ensures both Mac and MacBook can work independently.
  */
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -19,14 +20,17 @@ export interface DayliteRestConfig {
 }
 
 export class DayliteRestClient {
-  private refreshToken: string;
+  private configToken: string;      // Original token from env/config (never changes)
+  private refreshToken: string;     // Active token (may be rotated)
   private accessToken: string | null = null;
   private tokenExpiresAt: number = 0;
 
   constructor(config: DayliteRestConfig) {
+    this.configToken = config.refreshToken;
+
     // Try to load persisted token first, fall back to config
     const persisted = this.loadPersistedToken();
-    if (persisted) {
+    if (persisted && persisted !== config.refreshToken) {
       console.error(`[Daylite REST] Using persisted refresh token from ${TOKEN_FILE}`);
       this.refreshToken = persisted;
     } else {
@@ -65,6 +69,20 @@ export class DayliteRestClient {
   }
 
   /**
+   * Remove persisted token (e.g. when it's invalid).
+   */
+  private removePersistedToken(): void {
+    try {
+      if (existsSync(TOKEN_FILE)) {
+        unlinkSync(TOKEN_FILE);
+        console.error(`[Daylite REST] Removed invalid persisted token`);
+      }
+    } catch (e) {
+      console.error(`[Daylite REST] Could not remove token file: ${e}`);
+    }
+  }
+
+  /**
    * Get a valid access token, refreshing if needed.
    */
   private async getAccessToken(): Promise<string> {
@@ -75,8 +93,11 @@ export class DayliteRestClient {
     return this.refreshAccessToken();
   }
 
-  private async refreshAccessToken(): Promise<string> {
-    const url = `${BASE_URL}/personal_token/refresh_token?refresh_token=${encodeURIComponent(this.refreshToken)}`;
+  /**
+   * Try to refresh with a specific token. Returns null on failure.
+   */
+  private async tryRefresh(token: string): Promise<any | null> {
+    const url = `${BASE_URL}/personal_token/refresh_token?refresh_token=${encodeURIComponent(token)}`;
     const response = await fetch(url, {
       method: "GET",
       headers: { accept: "application/json" },
@@ -84,13 +105,38 @@ export class DayliteRestClient {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Token-Refresh fehlgeschlagen (${response.status}): ${text}`);
+      console.error(`[Daylite REST] Token refresh failed (${response.status}): ${text}`);
+      return null;
     }
 
-    const data = await response.json() as any;
+    return response.json();
+  }
+
+  private async refreshAccessToken(): Promise<string> {
+    // 1. Try with current (possibly rotated) token
+    let data = await this.tryRefresh(this.refreshToken);
+
+    // 2. If that failed and we have a different config token, try fallback
+    if (!data && this.refreshToken !== this.configToken) {
+      console.error(`[Daylite REST] Rotated token failed, trying original config token...`);
+      this.removePersistedToken();
+      data = await this.tryRefresh(this.configToken);
+      if (data) {
+        console.error(`[Daylite REST] Fallback to config token succeeded`);
+        this.refreshToken = this.configToken;
+      }
+    }
+
+    if (!data) {
+      throw new Error(
+        "Token-Refresh fehlgeschlagen mit allen verfügbaren Tokens. " +
+        "Bitte neuen Refresh Token generieren: https://developer.daylite.app/reference/personal-token"
+      );
+    }
+
     this.accessToken = data.access_token;
     // Store new refresh token if provided (token rotation)
-    if (data.refresh_token) {
+    if (data.refresh_token && data.refresh_token !== this.refreshToken) {
       this.refreshToken = data.refresh_token;
       // Persist to disk so it survives restarts
       this.persistToken(this.refreshToken);
@@ -106,7 +152,7 @@ export class DayliteRestClient {
   async request(method: string, path: string, body?: any, queryParams?: Record<string, string>): Promise<any> {
     const token = await this.getAccessToken();
     let url = `${BASE_URL}${path}`;
-    
+
     if (queryParams) {
       const params = new URLSearchParams(queryParams);
       url += `?${params.toString()}`;
