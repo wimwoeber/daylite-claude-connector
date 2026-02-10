@@ -50,9 +50,9 @@ export function registerSearchTools(server: McpServer, client: DayliteRestClient
 
         for (const endpoint of endpoints) {
           try {
-            // Fetch all items and filter client-side
-            // (Daylite REST API has no server-side search)
-            const data = await client.get(`/${endpoint}`);
+            // Fetch with a reasonable limit to avoid loading huge datasets
+            // (Daylite REST API has no server-side search, so we filter client-side)
+            const data = await client.get(`/${endpoint}`, { limit: "200" });
             const items = Array.isArray(data) ? data : data?.data || [];
             const filtered = items.filter((item: any) => matchesQuery(item, query));
             

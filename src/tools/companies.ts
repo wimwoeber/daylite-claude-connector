@@ -18,15 +18,15 @@ function formatCompany(c: any): string {
   if (c.number_of_employees) parts.push(`Mitarbeiter: ${c.number_of_employees}`);
   // Email addresses
   if (c.email_addresses?.length > 0) {
-    parts.push(`E-Mail: ${c.email_addresses.map((e: any) => `${e.address || e} (${e.label || ""})`).join(", ")}`);
+    parts.push(`E-Mail: ${c.email_addresses.map((e: any) => `${e.address || (typeof e === "string" ? e : "")} (${e.label || ""})`).join(", ")}`);
   }
   // Phone numbers
   if (c.phone_numbers?.length > 0) {
-    parts.push(`Telefon: ${c.phone_numbers.map((p: any) => `${p.number || p} (${p.label || ""})`).join(", ")}`);
+    parts.push(`Telefon: ${c.phone_numbers.map((p: any) => `${p.number || (typeof p === "string" ? p : "")} (${p.label || ""})`).join(", ")}`);
   }
   // URLs
   if (c.urls?.length > 0) {
-    parts.push(`URL: ${c.urls.map((u: any) => u.url || u.address || u).join(", ")}`);
+    parts.push(`URL: ${c.urls.map((u: any) => u.url || u.address || (typeof u === "string" ? u : "")).join(", ")}`);
   }
   // Addresses
   if (c.addresses?.length > 0) {
@@ -126,11 +126,25 @@ export function registerCompanyTools(server: McpServer, client: DayliteRestClien
     },
     async ({ id, name, email, phone, url }) => {
       try {
+        // Bestehende Firma laden, um Arrays nicht zu überschreiben
+        const existing = await client.get(`/companies/${id}`);
         const body: any = {};
         if (name) body.name = name;
-        if (email) body.email_addresses = [{ address: email, label: "work" }];
-        if (phone) body.phone_numbers = [{ number: phone, label: "work" }];
-        if (url) body.urls = [{ url, label: "work" }];
+        if (email) {
+          const existingEmails = existing?.email_addresses || [];
+          const alreadyExists = existingEmails.some((e: any) => e.address === email);
+          body.email_addresses = alreadyExists ? existingEmails : [...existingEmails, { address: email, label: "work" }];
+        }
+        if (phone) {
+          const existingPhones = existing?.phone_numbers || [];
+          const alreadyExists = existingPhones.some((p: any) => p.number === phone);
+          body.phone_numbers = alreadyExists ? existingPhones : [...existingPhones, { number: phone, label: "work" }];
+        }
+        if (url) {
+          const existingUrls = existing?.urls || [];
+          const alreadyExists = existingUrls.some((u: any) => (u.url || u.address) === url);
+          body.urls = alreadyExists ? existingUrls : [...existingUrls, { url, label: "work" }];
+        }
         const data = await client.put(`/companies/${id}`, body);
         return { content: [{ type: "text", text: `Firma aktualisiert:\n${formatCompany(data)}` }] };
       } catch (error: any) {

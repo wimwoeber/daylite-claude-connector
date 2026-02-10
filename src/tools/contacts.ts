@@ -20,15 +20,15 @@ function formatContact(c: any): string {
   if (c.birthday) parts.push(`Geburtstag: ${c.birthday}`);
   // Email addresses
   if (c.email_addresses?.length > 0) {
-    parts.push(`E-Mail: ${c.email_addresses.map((e: any) => `${e.address || e} (${e.label || ""})`).join(", ")}`);
+    parts.push(`E-Mail: ${c.email_addresses.map((e: any) => `${e.address || (typeof e === "string" ? e : "")} (${e.label || ""})`).join(", ")}`);
   }
   // Phone numbers
   if (c.phone_numbers?.length > 0) {
-    parts.push(`Telefon: ${c.phone_numbers.map((p: any) => `${p.number || p} (${p.label || ""})`).join(", ")}`);
+    parts.push(`Telefon: ${c.phone_numbers.map((p: any) => `${p.number || (typeof p === "string" ? p : "")} (${p.label || ""})`).join(", ")}`);
   }
   // URLs
   if (c.urls?.length > 0) {
-    parts.push(`URL: ${c.urls.map((u: any) => u.url || u.address || u).join(", ")}`);
+    parts.push(`URL: ${c.urls.map((u: any) => u.url || u.address || (typeof u === "string" ? u : "")).join(", ")}`);
   }
   // Address
   if (c.addresses?.length > 0) {
@@ -132,12 +132,22 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
     },
     async ({ id, first_name, last_name, title, email, phone }) => {
       try {
+        // Bestehenden Kontakt laden, um Arrays nicht zu überschreiben
+        const existing = await client.get(`/contacts/${id}`);
         const body: any = {};
         if (first_name) body.first_name = first_name;
         if (last_name) body.last_name = last_name;
         if (title) body.individual_salutation = title;
-        if (email) body.email_addresses = [{ address: email, label: "work" }];
-        if (phone) body.phone_numbers = [{ number: phone, label: "work" }];
+        if (email) {
+          const existingEmails = existing?.email_addresses || [];
+          const alreadyExists = existingEmails.some((e: any) => e.address === email);
+          body.email_addresses = alreadyExists ? existingEmails : [...existingEmails, { address: email, label: "work" }];
+        }
+        if (phone) {
+          const existingPhones = existing?.phone_numbers || [];
+          const alreadyExists = existingPhones.some((p: any) => p.number === phone);
+          body.phone_numbers = alreadyExists ? existingPhones : [...existingPhones, { number: phone, label: "work" }];
+        }
         const data = await client.put(`/contacts/${id}`, body);
         return { content: [{ type: "text", text: `Kontakt aktualisiert:\n${formatContact(data)}` }] };
       } catch (error: any) {
