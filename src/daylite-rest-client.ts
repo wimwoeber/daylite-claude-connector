@@ -2,9 +2,17 @@
  * Daylite REST API Client
  * Uses personal token (refresh_token) for authentication.
  * Base URL: https://api.marketcircle.net/v1/
+ * 
+ * Token persistence: After each refresh, the new refresh_token is saved
+ * to ~/.daylite-refresh-token so it survives process restarts.
  */
 
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
 const BASE_URL = "https://api.marketcircle.net/v1";
+const TOKEN_FILE = join(homedir(), ".daylite-refresh-token");
 
 export interface DayliteRestConfig {
   refreshToken: string;
@@ -16,7 +24,44 @@ export class DayliteRestClient {
   private tokenExpiresAt: number = 0;
 
   constructor(config: DayliteRestConfig) {
-    this.refreshToken = config.refreshToken;
+    // Try to load persisted token first, fall back to config
+    const persisted = this.loadPersistedToken();
+    if (persisted) {
+      console.error(`[Daylite REST] Using persisted refresh token from ${TOKEN_FILE}`);
+      this.refreshToken = persisted;
+    } else {
+      console.error(`[Daylite REST] Using refresh token from environment/config`);
+      this.refreshToken = config.refreshToken;
+    }
+  }
+
+  /**
+   * Load refresh token from disk if available.
+   */
+  private loadPersistedToken(): string | null {
+    try {
+      if (existsSync(TOKEN_FILE)) {
+        const data = readFileSync(TOKEN_FILE, "utf-8").trim();
+        if (data.length > 10) {
+          return data;
+        }
+      }
+    } catch (e) {
+      console.error(`[Daylite REST] Could not read token file: ${e}`);
+    }
+    return null;
+  }
+
+  /**
+   * Save refresh token to disk for persistence across restarts.
+   */
+  private persistToken(token: string): void {
+    try {
+      writeFileSync(TOKEN_FILE, token, { encoding: "utf-8", mode: 0o600 });
+      console.error(`[Daylite REST] Refresh token persisted to ${TOKEN_FILE}`);
+    } catch (e) {
+      console.error(`[Daylite REST] Could not persist token: ${e}`);
+    }
   }
 
   /**
@@ -44,9 +89,11 @@ export class DayliteRestClient {
 
     const data = await response.json() as any;
     this.accessToken = data.access_token;
-    // Store new refresh token if provided
+    // Store new refresh token if provided (token rotation)
     if (data.refresh_token) {
       this.refreshToken = data.refresh_token;
+      // Persist to disk so it survives restarts
+      this.persistToken(this.refreshToken);
     }
     // Assume 1 hour validity
     this.tokenExpiresAt = Date.now() + 3600000;
