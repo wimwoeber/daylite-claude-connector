@@ -5,11 +5,11 @@ import { DayliteRestClient } from "../daylite-rest-client.js";
 function formatContact(c: any): string {
   const parts: string[] = [];
   // Daylite API uses PascalCase field names
-  const id = c.ID || c.id;
+  const id = c.ID || c.id || c.objectID || c.object_id || c.primaryKeyValue;
   if (id) parts.push(`ID: ${id}`);
-  const firstName = c.FirstName || c.first_name;
-  const lastName = c.LastName || c.last_name;
-  const fullName = c.FullName || c.full_name;
+  const firstName = c.FirstName || c.first_name || c.firstName;
+  const lastName = c.LastName || c.last_name || c.lastName;
+  const fullName = c.FullName || c.full_name || c.fullName || c.cachedName || c.name || c.Name;
   if (fullName) {
     parts.push(`Name: ${fullName}`);
   } else if (firstName || lastName) {
@@ -82,12 +82,33 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
         if (limit) params.limit = String(limit);
         if (offset) params.offset = String(offset);
         const data = await client.get("/contacts", params);
-        const contacts = Array.isArray(data) ? data : data?.contacts || data?.Contacts || data?.data || [];
-        if (contacts.length === 0) {
-          return { content: [{ type: "text", text: "Keine Kontakte gefunden." }] };
+        
+        // Debug: show raw response structure
+        let debugInfo = "";
+        if (data) {
+          const isArr = Array.isArray(data);
+          debugInfo += `[DEBUG] Response is array: ${isArr}\n`;
+          if (!isArr) {
+            debugInfo += `[DEBUG] Top-level keys: ${Object.keys(data).join(", ")}\n`;
+          }
         }
-        const text = contacts.map(formatContact).join("\n---\n");
-        return { content: [{ type: "text", text: `${contacts.length} Kontakt(e):\n\n${text}` }] };
+        
+        const contacts = Array.isArray(data) ? data : data?.contacts || data?.Contacts || data?.data || [];
+        
+        // Debug: show first contact raw JSON
+        if (contacts.length > 0) {
+          debugInfo += `[DEBUG] First contact keys: ${Object.keys(contacts[0]).join(", ")}\n`;
+          debugInfo += `[DEBUG] First contact RAW:\n${JSON.stringify(contacts[0], null, 2).slice(0, 2000)}\n`;
+          if (contacts.length > 1) {
+            debugInfo += `[DEBUG] Second contact RAW:\n${JSON.stringify(contacts[1], null, 2).slice(0, 1000)}\n`;
+          }
+        }
+        
+        if (contacts.length === 0) {
+          return { content: [{ type: "text", text: `${debugInfo}\nKeine Kontakte gefunden.` }] };
+        }
+        const text = contacts.slice(0, 5).map(formatContact).join("\n---\n");
+        return { content: [{ type: "text", text: `${debugInfo}\n${contacts.length} Kontakt(e) (zeige erste 5):\n\n${text}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
