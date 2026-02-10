@@ -1,21 +1,25 @@
-# Daylite Claude Connector
+# Daylite MCP Server
 
-MCP-Server (Model Context Protocol), der [Daylite CRM](https://www.daylite.app/) mit [Claude Code](https://docs.anthropic.com/en/docs/claude-code) verbindet. Nutzt die CalDAV-Schnittstelle von Daylite, um Tasks und Termine direkt aus Claude Code heraus zu verwalten.
+MCP-Server für [Daylite CRM](https://www.daylite.app/) – verbindet Claude Desktop mit deinen Daylite-Daten.
 
 ## Features
 
-- **Tasks (VTODO):** Auflisten, erstellen, bearbeiten, als erledigt markieren, löschen
-- **Termine (VEVENT):** Auflisten (mit Zeitraum-Filter), erstellen, bearbeiten, löschen
-- **Kalender:** Alle verfügbaren Daylite-Kalender anzeigen
-- **CalDAV:** Nutzt den bestehenden Daylite CalDAV-Zugang - kein separater API-Antrag nötig
+### CalDAV (Tasks & Termine)
+- Aufgaben auflisten, erstellen, bearbeiten, löschen
+- Termine auflisten, erstellen, bearbeiten, löschen
+- Kalender verwalten
 
-## Voraussetzungen
+### REST API (CRM-Daten)
+- **Kontakte**: Suchen, anzeigen, erstellen, aktualisieren
+- **Firmen**: Suchen, anzeigen, erstellen, aktualisieren
+- **Verkaufschancen (Opportunities)**: Verwalten mit Pipeline-Stufen
+- **Projekte**: Verwalten mit Pipeline-Stufen
+- **Pipelines**: Verfügbare Pipelines und Stufen anzeigen
+- **Übergreifende Suche**: Über alle Entitäten hinweg suchen
 
-- Node.js 18+
-- Ein Daylite-Account mit CalDAV-Zugang
-- Claude Code
+## Setup
 
-## Installation
+### 1. Projekt klonen & bauen
 
 ```bash
 git clone https://github.com/wimwoeber/daylite-claude-connector.git
@@ -24,71 +28,87 @@ npm install
 npm run build
 ```
 
-## Daylite CalDAV-Zugangsdaten
+### 2. Zugangsdaten konfigurieren
 
-1. Daylite öffnen > Einstellungen > **Kalender und Kontakte Integration**
-2. Auf **"+ Neue App-Anmeldung"** klicken
-3. Benutzername und Passwort notieren
-4. Serveradresse: `https://caldav.marketcircle.net`
+#### CalDAV (für Tasks & Termine)
+In Daylite: Einstellungen → Kalender und Kontakte Integration → + Neue App-Anmeldung
 
-## In Claude Code registrieren
+#### REST API (für Kontakte, Firmen, Opportunities, Projekte)
+1. Gehe zu https://developer.daylite.app/reference/personal-token
+2. Klicke auf "here" um dich zu autorisieren
+3. Speichere den `refresh_token` sicher ab
 
-```bash
-claude mcp add daylite \
-  -e DAYLITE_USERNAME=dein-benutzername \
-  -e DAYLITE_PASSWORD=dein-passwort \
-  -- node /pfad/zu/daylite-claude-connector/build/index.js
+### 3. Claude Desktop konfigurieren
+
+In `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "daylite": {
+      "command": "node",
+      "args": ["/Users/DEIN_USER/daylite-claude-connector/build/index.js"],
+      "env": {
+        "DAYLITE_USERNAME": "dein-caldav-username",
+        "DAYLITE_PASSWORD": "dein-caldav-passwort",
+        "DAYLITE_REFRESH_TOKEN": "dein-refresh-token"
+      }
+    }
+  }
+}
 ```
 
-Falls die Serveradresse abweicht:
+**Hinweis:** Du kannst CalDAV und REST API unabhängig voneinander nutzen. Wenn nur `DAYLITE_REFRESH_TOKEN` gesetzt ist, stehen nur die REST-Tools zur Verfügung. Wenn nur `DAYLITE_USERNAME` und `DAYLITE_PASSWORD` gesetzt sind, nur die CalDAV-Tools.
 
-```bash
-claude mcp add daylite \
-  -e DAYLITE_USERNAME=dein-benutzername \
-  -e DAYLITE_PASSWORD=dein-passwort \
-  -e DAYLITE_SERVER_URL=https://deine-server-url \
-  -- node /pfad/zu/daylite-claude-connector/build/index.js
-```
+### 4. Claude Desktop neu starten
 
-Nach der Registrierung Claude Code neu starten.
+Nach dem Neustart solltest du in den Entwicklereinstellungen sehen, dass der Daylite-Server läuft.
 
 ## Verfügbare Tools
 
+### CalDAV
 | Tool | Beschreibung |
-|---|---|
-| `daylite_list_calendars` | Alle verfügbaren Kalender auflisten |
-| `daylite_list_tasks` | Tasks auflisten |
-| `daylite_get_task` | Task per URL abrufen |
-| `daylite_create_task` | Neuen Task erstellen |
-| `daylite_update_task` | Task aktualisieren / abschließen |
-| `daylite_delete_task` | Task löschen |
-| `daylite_list_appointments` | Termine auflisten (Zeitraum-Filter) |
-| `daylite_get_appointment` | Termin per URL abrufen |
-| `daylite_create_appointment` | Neuen Termin erstellen |
+|------|-------------|
+| `daylite_list_tasks` | Aufgaben auflisten |
+| `daylite_get_task` | Aufgabe abrufen |
+| `daylite_create_task` | Aufgabe erstellen |
+| `daylite_update_task` | Aufgabe aktualisieren |
+| `daylite_delete_task` | Aufgabe löschen |
+| `daylite_list_appointments` | Termine auflisten |
+| `daylite_get_appointment` | Termin abrufen |
+| `daylite_create_appointment` | Termin erstellen |
 | `daylite_update_appointment` | Termin aktualisieren |
 | `daylite_delete_appointment` | Termin löschen |
+| `daylite_list_calendars` | Kalender auflisten |
 
-## Verwendungsbeispiele in Claude Code
+### REST API
+| Tool | Beschreibung |
+|------|-------------|
+| `daylite_list_contacts` | Kontakte auflisten |
+| `daylite_get_contact` | Kontakt abrufen |
+| `daylite_create_contact` | Kontakt erstellen |
+| `daylite_update_contact` | Kontakt aktualisieren |
+| `daylite_list_companies` | Firmen auflisten |
+| `daylite_get_company` | Firma abrufen |
+| `daylite_create_company` | Firma erstellen |
+| `daylite_update_company` | Firma aktualisieren |
+| `daylite_list_opportunities` | Verkaufschancen auflisten |
+| `daylite_get_opportunity` | Verkaufschance abrufen |
+| `daylite_create_opportunity` | Verkaufschance erstellen |
+| `daylite_update_opportunity` | Verkaufschance aktualisieren |
+| `daylite_list_projects` | Projekte auflisten |
+| `daylite_get_project` | Projekt abrufen |
+| `daylite_create_project` | Projekt erstellen |
+| `daylite_update_project` | Projekt aktualisieren |
+| `daylite_search` | Übergreifende Suche |
+| `daylite_list_pipelines` | Pipelines anzeigen |
 
-```
-"Zeig mir meine Daylite-Kalender"
-"Was sind meine offenen Tasks?"
-"Erstelle einen Task: Angebot an Firma X senden, fällig am Freitag"
-"Welche Termine habe ich diese Woche?"
-"Erstelle morgen um 14 Uhr einen Termin mit Titel Kundengespräch"
-"Markiere den Task XY als erledigt"
-```
+## Token-Rotation
 
-## Technik
-
-- **TypeScript** mit MCP SDK (`@modelcontextprotocol/sdk`)
-- **tsdav** als CalDAV-Client
-- **stdio** Transport (lokaler MCP-Server)
-- iCalendar-Parsing für VTODO und VEVENT
-
-## Einschränkungen
-
-Der CalDAV-Zugang bietet Zugriff auf Kalender, Termine und Tasks. Andere Daylite-Objekte (Kontakte, Opportunities, Projekte, Pipelines) sind darüber nicht verfügbar - dafür wäre der separate [Daylite REST API](https://developer.daylite.app/) Zugang nötig.
+Der REST API Client handhabt Token-Rotation automatisch:
+- Access Tokens laufen nach 1 Stunde ab
+- Der Client refresht automatisch über den Refresh Token
+- Neue Refresh Tokens werden automatisch übernommen
 
 ## Lizenz
 
