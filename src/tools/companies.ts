@@ -145,7 +145,7 @@ export function registerCompanyTools(server: McpServer, client: DayliteRestClien
           const alreadyExists = existingUrls.some((u: any) => (u.url || u.address) === url);
           body.urls = alreadyExists ? existingUrls : [...existingUrls, { url, label: "work" }];
         }
-        const data = await client.put(`/companies/${id}`, body);
+        const data = await client.patch(`/companies/${id}`, body);
         return { content: [{ type: "text", text: `Firma aktualisiert:\n${formatCompany(data)}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };

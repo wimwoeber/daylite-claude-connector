@@ -131,7 +131,7 @@ export function registerProjectTools(server: McpServer, client: DayliteRestClien
         if (stage_id) body.current_pipeline_stage = `/v1/pipeline_stages/${stage_id}`;
         if (details) body.details = details;
         if (status) body.status = status;
-        const data = await client.put(`/projects/${id}`, body);
+        const data = await client.patch(`/projects/${id}`, body);
         return { content: [{ type: "text", text: `Projekt aktualisiert:\n${formatProject(data)}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };

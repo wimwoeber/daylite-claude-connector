@@ -132,7 +132,7 @@ export function registerOpportunityTools(server: McpServer, client: DayliteRestC
         if (stage_id) body.current_pipeline_stage = `/v1/pipeline_stages/${stage_id}`;
         if (details) body.details = details;
         if (status) body.state = status;
-        const data = await client.put(`/opportunities/${id}`, body);
+        const data = await client.patch(`/opportunities/${id}`, body);
         return { content: [{ type: "text", text: `Verkaufschance aktualisiert:\n${formatOpportunity(data)}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
