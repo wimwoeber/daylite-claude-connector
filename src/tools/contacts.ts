@@ -148,8 +148,10 @@ export function registerContactTools(server: McpServer, client: DayliteRestClien
           const alreadyExists = existingPhones.some((p: any) => p.number === phone);
           body.phone_numbers = alreadyExists ? existingPhones : [...existingPhones, { number: phone, label: "work" }];
         }
-        const data = await client.patch(`/contacts/${id}`, body);
-        return { content: [{ type: "text", text: `Kontakt aktualisiert:\n${formatContact(data)}` }] };
+        await client.patch(`/contacts/${id}`, body);
+        // PATCH gibt ggf. nicht das volle Objekt zurück – neu laden
+        const updated = await client.get(`/contacts/${id}`);
+        return { content: [{ type: "text", text: `Kontakt aktualisiert:\n${formatContact(updated)}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
