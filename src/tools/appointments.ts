@@ -13,29 +13,65 @@ function formatAppointment(a: any): string {
   const parts: string[] = [];
   const id = extractId(a.self);
   if (id) parts.push(`ID: ${id}`);
-  if (a.name) parts.push(`Titel: ${a.name}`);
-  if (a.start) parts.push(`Start: ${a.start}`);
-  if (a.end) parts.push(`Ende: ${a.end}`);
+  if (a.subject) parts.push(`Titel: ${a.subject}`);
+  if (a.local_start) parts.push(`Start: ${a.local_start}`);
+  if (a.local_end) parts.push(`Ende: ${a.local_end}`);
+  if (a.timezone) parts.push(`Zeitzone: ${a.timezone}`);
   if (a.all_day) parts.push(`Ganztägig: Ja`);
   if (a.location) parts.push(`Ort: ${a.location}`);
   if (a.details) parts.push(`Details: ${a.details}`);
+  if (a.type && a.type !== "appointment") parts.push(`Typ: ${a.type}`);
   if (a.status) parts.push(`Status: ${a.status}`);
-  if (a.category) parts.push(`Kategorie: ${a.category}`);
+  if (a.show_as) parts.push(`Anzeigen als: ${a.show_as}`);
   // Contacts
   if (a.contacts?.length > 0) {
-    parts.push(`Kontakte: ${a.contacts.map((co: any) => `${co.contact} (${co.role || ""})`).join(", ")}`);
+    parts.push(`Kontakte: ${a.contacts.map((co: any) => co.contact).join(", ")}`);
   }
   // Companies
   if (a.companies?.length > 0) {
-    parts.push(`Firmen: ${a.companies.map((co: any) => `${co.company} (${co.role || ""})`).join(", ")}`);
+    parts.push(`Firmen: ${a.companies.map((co: any) => co.company).join(", ")}`);
   }
-  // Keywords
-  if (a.keywords?.length > 0) {
-    parts.push(`Schlagwörter: ${a.keywords.join(", ")}`);
+  // Opportunities
+  if (a.opportunities?.length > 0) {
+    parts.push(`Verkaufschancen: ${a.opportunities.map((o: any) => o.opportunity).join(", ")}`);
   }
-  if (a.flagged) parts.push(`Markiert`);
   if (a.owner) parts.push(`Besitzer: ${a.owner}`);
   return parts.join("\n");
+}
+
+/** Short format for list view (no details, no contacts) */
+function formatAppointmentShort(a: any): string {
+  const parts: string[] = [];
+  const id = extractId(a.self);
+  if (id) parts.push(`ID: ${id}`);
+  if (a.subject) parts.push(`Titel: ${a.subject}`);
+  if (a.local_start) parts.push(`Start: ${a.local_start}`);
+  if (a.local_end) parts.push(`Ende: ${a.local_end}`);
+  if (a.all_day) parts.push(`Ganztägig: Ja`);
+  if (a.location) parts.push(`Ort: ${a.location}`);
+  if (a.type && a.type !== "appointment") parts.push(`Typ: ${a.type}`);
+  return parts.join(" | ");
+}
+
+/**
+ * Fetch full details for multiple appointments in parallel batches.
+ * The list endpoint only returns self+subject, so we need individual GETs.
+ */
+async function fetchAppointmentDetails(
+  client: DayliteRestClient,
+  ids: string[],
+  batchSize = 20
+): Promise<any[]> {
+  const results: any[] = [];
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const batch = ids.slice(i, i + batchSize);
+    const promises = batch.map((id) =>
+      client.get(`/appointments/${id}`).catch(() => null)
+    );
+    const batchResults = await Promise.all(promises);
+    results.push(...batchResults.filter(Boolean));
+  }
+  return results;
 }
 
 export function registerAppointmentTools(server: McpServer, client: DayliteRestClient): void {
@@ -49,25 +85,63 @@ export function registerAppointmentTools(server: McpServer, client: DayliteRestC
     },
     async ({ start_after, start_before }) => {
       try {
-        const params: Record<string, string> = { limit: "200" };
-        const data = await client.get("/appointments", params);
-        let appointments = Array.isArray(data) ? data : data?.data || [];
+        // List endpoint returns only self + subject (no dates)
+        const data = await client.get("/appointments");
+        const list = Array.isArray(data) ? data : data?.results || data?.data || [];
 
-        // Client-side time range filter
-        if (start_after) {
-          const after = new Date(start_after).getTime();
-          appointments = appointments.filter((a: any) => a.start && new Date(a.start).getTime() >= after);
-        }
-        if (start_before) {
-          const before = new Date(start_before).getTime();
-          appointments = appointments.filter((a: any) => a.start && new Date(a.start).getTime() <= before);
-        }
-
-        if (appointments.length === 0) {
+        if (list.length === 0) {
           return { content: [{ type: "text", text: "Keine Termine gefunden." }] };
         }
-        const text = appointments.map(formatAppointment).join("\n\n---\n\n");
-        return { content: [{ type: "text", text: `${appointments.length} Termine gefunden:\n\n${text}` }] };
+
+        // If date filter is requested, we need to fetch individual appointments
+        // to get their dates. We fetch the most recent ones (end of list).
+        if (start_after || start_before) {
+          // Take the last 100 appointments (most recent) for filtering
+          const recentIds = list.slice(-100).map((a: any) => extractId(a.self)).filter(Boolean) as string[];
+          const detailed = await fetchAppointmentDetails(client, recentIds);
+
+          let filtered = detailed;
+          if (start_after) {
+            const after = new Date(start_after).getTime();
+            filtered = filtered.filter((a: any) => {
+              const start = a.utc_start || a.local_start;
+              return start && new Date(start).getTime() >= after;
+            });
+          }
+          if (start_before) {
+            const before = new Date(start_before).getTime();
+            filtered = filtered.filter((a: any) => {
+              const start = a.utc_start || a.local_start;
+              return start && new Date(start).getTime() <= before;
+            });
+          }
+
+          // Sort by start date
+          filtered.sort((a: any, b: any) => {
+            const aStart = new Date(a.utc_start || a.local_start || 0).getTime();
+            const bStart = new Date(b.utc_start || b.local_start || 0).getTime();
+            return aStart - bStart;
+          });
+
+          if (filtered.length === 0) {
+            return { content: [{ type: "text", text: "Keine Termine im angegebenen Zeitraum gefunden (letzte 100 Termine geprüft)." }] };
+          }
+          const text = filtered.map(formatAppointmentShort).join("\n\n");
+          return { content: [{ type: "text", text: `${filtered.length} Termine gefunden:\n\n${text}` }] };
+        }
+
+        // No filter: return summary list (last 50 for relevance)
+        const recent = list.slice(-50);
+        const text = recent.map((a: any) => {
+          const id = extractId(a.self);
+          return `ID: ${id} | ${a.subject || "(kein Titel)"}`;
+        }).join("\n");
+        return {
+          content: [{
+            type: "text",
+            text: `${list.length} Termine gesamt (letzte 50 angezeigt):\n\n${text}\n\nFür Details: daylite_get_appointment mit der ID aufrufen.`
+          }]
+        };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
@@ -106,14 +180,21 @@ export function registerAppointmentTools(server: McpServer, client: DayliteRestC
     async ({ summary, dtstart, dtend, description, location, all_day }) => {
       try {
         const body: any = {
-          name: summary,
-          start: dtstart,
-          end: dtend,
+          subject: summary,
+          local_start: dtstart,
+          local_end: dtend,
+          timezone: "Europe/Berlin",
         };
         if (description) body.details = description;
         if (location) body.location = location;
         if (all_day) body.all_day = true;
         const data = await client.post("/appointments", body);
+        // POST may not return full object, reload
+        const id = extractId(data?.self);
+        if (id) {
+          const full = await client.get(`/appointments/${id}`);
+          return { content: [{ type: "text", text: `Termin erstellt:\n${formatAppointment(full)}` }] };
+        }
         return { content: [{ type: "text", text: `Termin erstellt:\n${formatAppointment(data)}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
@@ -136,9 +217,9 @@ export function registerAppointmentTools(server: McpServer, client: DayliteRestC
       try {
         const id = url.match(/\d+$/)?.[0] || url;
         const body: any = {};
-        if (summary) body.name = summary;
-        if (dtstart) body.start = dtstart;
-        if (dtend) body.end = dtend;
+        if (summary) body.subject = summary;
+        if (dtstart) body.local_start = dtstart;
+        if (dtend) body.local_end = dtend;
         if (description) body.details = description;
         if (location) body.location = location;
         await client.patch(`/appointments/${id}`, body);

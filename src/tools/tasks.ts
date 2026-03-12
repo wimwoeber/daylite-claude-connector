@@ -13,27 +13,30 @@ function formatTask(t: any): string {
   const parts: string[] = [];
   const id = extractId(t.self);
   if (id) parts.push(`ID: ${id}`);
-  if (t.name) parts.push(`Titel: ${t.name}`);
+  if (t.title) parts.push(`Titel: ${t.title}`);
   if (t.details) parts.push(`Details: ${t.details}`);
   if (t.status) parts.push(`Status: ${t.status}`);
   if (t.due) parts.push(`Fällig: ${t.due}`);
-  if (t.start) parts.push(`Start: ${t.start}`);
-  if (t.priority !== undefined && t.priority > 0) parts.push(`Priorität: ${t.priority}`);
+  if (t.priority && t.priority !== "no_priority") parts.push(`Priorität: ${t.priority}`);
   if (t.category) parts.push(`Kategorie: ${t.category}`);
+  if (t.type && t.type !== "todo") parts.push(`Typ: ${t.type}`);
   if (t.completed) parts.push(`Erledigt am: ${t.completed}`);
+  // Projects
+  if (t.projects?.length > 0) {
+    parts.push(`Projekte: ${t.projects.map((p: any) => p.project).join(", ")}`);
+  }
   // Contacts
   if (t.contacts?.length > 0) {
-    parts.push(`Kontakte: ${t.contacts.map((co: any) => `${co.contact} (${co.role || ""})`).join(", ")}`);
+    parts.push(`Kontakte: ${t.contacts.map((co: any) => co.contact).join(", ")}`);
   }
   // Companies
   if (t.companies?.length > 0) {
-    parts.push(`Firmen: ${t.companies.map((co: any) => `${co.company} (${co.role || ""})`).join(", ")}`);
+    parts.push(`Firmen: ${t.companies.map((co: any) => co.company).join(", ")}`);
   }
-  // Keywords
-  if (t.keywords?.length > 0) {
-    parts.push(`Schlagwörter: ${t.keywords.join(", ")}`);
+  // Opportunities
+  if (t.opportunities?.length > 0) {
+    parts.push(`Verkaufschancen: ${t.opportunities.map((o: any) => o.opportunity).join(", ")}`);
   }
-  if (t.flagged) parts.push(`Markiert`);
   if (t.owner) parts.push(`Besitzer: ${t.owner}`);
   return parts.join("\n");
 }
@@ -47,16 +50,26 @@ export function registerTaskTools(server: McpServer, client: DayliteRestClient):
     },
     async () => {
       try {
-        const params: Record<string, string> = { limit: "200" };
-        const data = await client.get("/tasks", params);
-        const tasks = Array.isArray(data) ? data : data?.data || [];
+        // List endpoint returns only self + title (no details)
+        const data = await client.get("/tasks");
+        const tasks = Array.isArray(data) ? data : data?.results || data?.data || [];
 
         if (tasks.length === 0) {
           return { content: [{ type: "text", text: "Keine Tasks gefunden." }] };
         }
 
-        const text = tasks.map(formatTask).join("\n\n---\n\n");
-        return { content: [{ type: "text", text: `${tasks.length} Tasks gefunden:\n\n${text}` }] };
+        // Return summary list (last 50 for relevance)
+        const recent = tasks.slice(-50);
+        const text = recent.map((t: any) => {
+          const id = extractId(t.self);
+          return `ID: ${id} | ${t.title || "(kein Titel)"}`;
+        }).join("\n");
+        return {
+          content: [{
+            type: "text",
+            text: `${tasks.length} Tasks gesamt (letzte 50 angezeigt):\n\n${text}\n\nFür Details: daylite_get_task mit der ID aufrufen.`
+          }]
+        };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
@@ -92,11 +105,22 @@ export function registerTaskTools(server: McpServer, client: DayliteRestClient):
     },
     async ({ summary, description, due, priority }) => {
       try {
-        const body: any = { name: summary };
+        const body: any = { title: summary };
         if (description) body.details = description;
         if (due) body.due = due;
-        if (priority !== undefined) body.priority = priority;
+        if (priority !== undefined && priority > 0) {
+          // Map numeric priority to API string values
+          if (priority <= 3) body.priority = "high";
+          else if (priority <= 6) body.priority = "medium";
+          else body.priority = "low";
+        }
         const data = await client.post("/tasks", body);
+        // POST may not return full object, reload
+        const id = extractId(data?.self);
+        if (id) {
+          const full = await client.get(`/tasks/${id}`);
+          return { content: [{ type: "text", text: `Task erstellt:\n${formatTask(full)}` }] };
+        }
         return { content: [{ type: "text", text: `Task erstellt:\n${formatTask(data)}` }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
@@ -120,12 +144,20 @@ export function registerTaskTools(server: McpServer, client: DayliteRestClient):
       try {
         const id = url.match(/\d+$/)?.[0] || url;
         const body: any = {};
-        if (summary) body.name = summary;
+        if (summary) body.title = summary;
         if (description) body.details = description;
         if (due) body.due = due;
-        if (priority !== undefined) body.priority = priority;
+        if (priority !== undefined) {
+          if (priority === 0) body.priority = "no_priority";
+          else if (priority <= 3) body.priority = "high";
+          else if (priority <= 6) body.priority = "medium";
+          else body.priority = "low";
+        }
         if (status) body.status = status;
-        if (completed) body.completed = new Date().toISOString();
+        if (completed) {
+          body.status = "done";
+          body.completed = new Date().toISOString();
+        }
         await client.patch(`/tasks/${id}`, body);
         const updated = await client.get(`/tasks/${id}`);
         return { content: [{ type: "text", text: `Task aktualisiert:\n${formatTask(updated)}` }] };
