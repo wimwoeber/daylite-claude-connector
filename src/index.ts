@@ -59,23 +59,23 @@ async function main() {
     version: "2.0.0",
   });
 
-  // CalDAV-Tools registrieren (Tasks & Termine)
+  // CalDAV-Tools registrieren (Tasks)
   if (config.caldav) {
     const caldavClient = new DayliteCalDAVClient(config.caldav);
     registerTaskTools(server, caldavClient);
-    registerAppointmentTools(server, caldavClient);
-    features.push("CalDAV (Tasks, Termine)");
+    features.push("CalDAV (Tasks)");
   }
 
-  // REST API-Tools registrieren (Kontakte, Firmen, etc.)
+  // REST API-Tools registrieren (Termine, Kontakte, Firmen, etc.)
   if (config.rest) {
     const restClient = new DayliteRestClient(config.rest);
+    registerAppointmentTools(server, restClient);
     registerContactTools(server, restClient);
     registerCompanyTools(server, restClient);
     registerOpportunityTools(server, restClient);
     registerProjectTools(server, restClient);
     registerSearchTools(server, restClient);
-    features.push("REST API (Kontakte, Firmen, Opportunities, Projekte, Suche, Pipelines)");
+    features.push("REST API (Termine, Kontakte, Firmen, Opportunities, Projekte, Suche, Pipelines)");
   }
 
   // Server über stdio starten

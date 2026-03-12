@@ -1,46 +1,44 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { DayliteCalDAVClient } from "../daylite-client.js";
-import type { ParsedEvent } from "../types.js";
+import type { DayliteRestClient } from "../daylite-rest-client.js";
 
-function formatEvent(event: ParsedEvent): string {
-  const lines: string[] = [];
-  lines.push(`Titel: ${event.summary}`);
-  lines.push(`URL: ${event.url}`);
-  if (event.uid) lines.push(`UID: ${event.uid}`);
-  lines.push(`Start: ${event.dtstart}`);
-  if (event.dtend) lines.push(`Ende: ${event.dtend}`);
-  if (event.allDay) lines.push(`Ganztägig: Ja`);
-  if (event.description) lines.push(`Details: ${event.description}`);
-  if (event.location) lines.push(`Ort: ${event.location}`);
-  if (event.status) lines.push(`Status: ${event.status}`);
-  if (event.attendees && event.attendees.length > 0) {
-    lines.push(`Teilnehmer: ${event.attendees.join(", ")}`);
-  }
-  return lines.join("\n");
+/** Extract numeric ID from self URL like /v1/appointments/5000 */
+function extractId(self: string | undefined): string | null {
+  if (!self) return null;
+  const parts = self.split("/");
+  return parts[parts.length - 1] || null;
 }
 
-export function registerAppointmentTools(server: McpServer, client: DayliteCalDAVClient): void {
-  server.tool(
-    "daylite_list_calendars",
-    "Liste alle verfügbaren Daylite-Kalender auf.",
-    {},
-    async () => {
-      try {
-        const calendars = await client.getCalendars();
-        if (calendars.length === 0) {
-          return { content: [{ type: "text", text: "Keine Kalender gefunden." }] };
-        }
-        const formatted = calendars
-          .map((c, i) => `${i + 1}. ${c.displayName ?? "(Unbenannt)"} - ${c.url}`)
-          .join("\n");
-        return { content: [{ type: "text", text: `${calendars.length} Kalender gefunden:\n\n${formatted}` }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
-      }
-    }
-  );
+function formatAppointment(a: any): string {
+  const parts: string[] = [];
+  const id = extractId(a.self);
+  if (id) parts.push(`ID: ${id}`);
+  if (a.name) parts.push(`Titel: ${a.name}`);
+  if (a.start) parts.push(`Start: ${a.start}`);
+  if (a.end) parts.push(`Ende: ${a.end}`);
+  if (a.all_day) parts.push(`Ganztägig: Ja`);
+  if (a.location) parts.push(`Ort: ${a.location}`);
+  if (a.details) parts.push(`Details: ${a.details}`);
+  if (a.status) parts.push(`Status: ${a.status}`);
+  if (a.category) parts.push(`Kategorie: ${a.category}`);
+  // Contacts
+  if (a.contacts?.length > 0) {
+    parts.push(`Kontakte: ${a.contacts.map((co: any) => `${co.contact} (${co.role || ""})`).join(", ")}`);
+  }
+  // Companies
+  if (a.companies?.length > 0) {
+    parts.push(`Firmen: ${a.companies.map((co: any) => `${co.company} (${co.role || ""})`).join(", ")}`);
+  }
+  // Keywords
+  if (a.keywords?.length > 0) {
+    parts.push(`Schlagwörter: ${a.keywords.join(", ")}`);
+  }
+  if (a.flagged) parts.push(`Markiert`);
+  if (a.owner) parts.push(`Besitzer: ${a.owner}`);
+  return parts.join("\n");
+}
 
+export function registerAppointmentTools(server: McpServer, client: DayliteRestClient): void {
   server.tool(
     "daylite_list_appointments",
     "Liste Termine aus Daylite auf. Optional filterbar nach Zeitraum.",
@@ -49,41 +47,47 @@ export function registerAppointmentTools(server: McpServer, client: DayliteCalDA
       start_before: z.string().optional().describe("Nur Termine vor diesem Zeitpunkt (ISO 8601, z.B. 2025-12-31T23:59:59Z)"),
       calendar: z.string().optional().describe("Name des Kalenders (optional)"),
     },
-    async (args) => {
+    async ({ start_after, start_before }) => {
       try {
-        const events = await client.listEvents({
-          calendarName: args.calendar,
-          timeRangeStart: args.start_after,
-          timeRangeEnd: args.start_before,
-        });
+        const params: Record<string, string> = { limit: "200" };
+        const data = await client.get("/appointments", params);
+        let appointments = Array.isArray(data) ? data : data?.data || [];
 
-        if (events.length === 0) {
-          return { content: [{ type: "text", text: "Keine Termine gefunden." }] };
+        // Client-side time range filter
+        if (start_after) {
+          const after = new Date(start_after).getTime();
+          appointments = appointments.filter((a: any) => a.start && new Date(a.start).getTime() >= after);
+        }
+        if (start_before) {
+          const before = new Date(start_before).getTime();
+          appointments = appointments.filter((a: any) => a.start && new Date(a.start).getTime() <= before);
         }
 
-        const formatted = events.map(formatEvent).join("\n\n---\n\n");
-        return { content: [{ type: "text", text: `${events.length} Termine gefunden:\n\n${formatted}` }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        if (appointments.length === 0) {
+          return { content: [{ type: "text", text: "Keine Termine gefunden." }] };
+        }
+        const text = appointments.map(formatAppointment).join("\n\n---\n\n");
+        return { content: [{ type: "text", text: `${appointments.length} Termine gefunden:\n\n${text}` }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
 
   server.tool(
     "daylite_get_appointment",
-    "Rufe einen einzelnen Daylite-Termin per URL ab.",
+    "Rufe einen einzelnen Daylite-Termin per ID ab.",
     {
       url: z.string().describe("Die CalDAV-URL des Termins (aus daylite_list_appointments)"),
     },
-    async (args) => {
+    async ({ url }) => {
       try {
-        const event = await client.getEvent(args.url);
-        if (!event) {
-          return { content: [{ type: "text", text: "Termin nicht gefunden." }] };
-        }
-        return { content: [{ type: "text", text: formatEvent(event) }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        // Support both old CalDAV URLs and new numeric IDs
+        const id = url.match(/\d+$/)?.[0] || url;
+        const data = await client.get(`/appointments/${id}`);
+        return { content: [{ type: "text", text: formatAppointment(data) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
@@ -100,20 +104,20 @@ export function registerAppointmentTools(server: McpServer, client: DayliteCalDA
       all_day: z.boolean().optional().describe("Ganztägiger Termin (true/false)"),
       calendar: z.string().optional().describe("Name des Kalenders (optional)"),
     },
-    async (args) => {
+    async ({ summary, dtstart, dtend, description, location, all_day }) => {
       try {
-        const uid = await client.createEvent({
-          calendarName: args.calendar,
-          summary: args.summary,
-          dtstart: args.dtstart,
-          dtend: args.dtend,
-          description: args.description,
-          location: args.location,
-          allDay: args.all_day,
-        });
-        return { content: [{ type: "text", text: `Termin erstellt: "${args.summary}" (UID: ${uid})` }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        const body: any = {
+          name: summary,
+          start: dtstart,
+          end: dtend,
+        };
+        if (description) body.details = description;
+        if (location) body.location = location;
+        if (all_day) body.all_day = true;
+        const data = await client.post("/appointments", body);
+        return { content: [{ type: "text", text: `Termin erstellt:\n${formatAppointment(data)}` }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
@@ -129,19 +133,20 @@ export function registerAppointmentTools(server: McpServer, client: DayliteCalDA
       description: z.string().optional().describe("Neue Beschreibung"),
       location: z.string().optional().describe("Neuer Ort"),
     },
-    async (args) => {
+    async ({ url, summary, dtstart, dtend, description, location }) => {
       try {
-        await client.updateEvent({
-          url: args.url,
-          summary: args.summary,
-          dtstart: args.dtstart,
-          dtend: args.dtend,
-          description: args.description,
-          location: args.location,
-        });
-        return { content: [{ type: "text", text: "Termin aktualisiert." }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        const id = url.match(/\d+$/)?.[0] || url;
+        const body: any = {};
+        if (summary) body.name = summary;
+        if (dtstart) body.start = dtstart;
+        if (dtend) body.end = dtend;
+        if (description) body.details = description;
+        if (location) body.location = location;
+        await client.patch(`/appointments/${id}`, body);
+        const updated = await client.get(`/appointments/${id}`);
+        return { content: [{ type: "text", text: `Termin aktualisiert:\n${formatAppointment(updated)}` }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
@@ -152,12 +157,13 @@ export function registerAppointmentTools(server: McpServer, client: DayliteCalDA
     {
       url: z.string().describe("Die CalDAV-URL des Termins (aus daylite_list_appointments)"),
     },
-    async (args) => {
+    async ({ url }) => {
       try {
-        await client.deleteEvent(args.url);
+        const id = url.match(/\d+$/)?.[0] || url;
+        await client.delete(`/appointments/${id}`);
         return { content: [{ type: "text", text: "Termin gelöscht." }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
