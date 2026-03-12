@@ -1,64 +1,64 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { DayliteCalDAVClient } from "../daylite-client.js";
-import type { ParsedTask } from "../types.js";
+import type { DayliteRestClient } from "../daylite-rest-client.js";
 
-function formatTask(task: ParsedTask): string {
-  const lines: string[] = [];
-  lines.push(`Titel: ${task.summary}`);
-  lines.push(`URL: ${task.url}`);
-  if (task.uid) lines.push(`UID: ${task.uid}`);
-  if (task.description) lines.push(`Details: ${task.description}`);
-
-  const statusMap: Record<string, string> = {
-    "NEEDS-ACTION": "Offen",
-    "IN-PROCESS": "In Bearbeitung",
-    "COMPLETED": "Erledigt",
-    "CANCELLED": "Abgesagt",
-  };
-  if (task.status) lines.push(`Status: ${statusMap[task.status] ?? task.status}`);
-
-  if (task.due) lines.push(`Fällig: ${task.due}`);
-  if (task.dtstart) lines.push(`Start: ${task.dtstart}`);
-  if (task.priority !== undefined) {
-    const priorities: Record<number, string> = {
-      0: "Nicht definiert",
-      1: "Höchste",
-      2: "Hoch",
-      3: "Hoch",
-      4: "Hoch",
-      5: "Mittel",
-      6: "Niedrig",
-      7: "Niedrig",
-      8: "Niedrig",
-      9: "Niedrigste",
-    };
-    lines.push(`Priorität: ${priorities[task.priority] ?? task.priority}`);
-  }
-  if (task.percentComplete !== undefined) lines.push(`Fortschritt: ${task.percentComplete}%`);
-  if (task.completed) lines.push(`Erledigt am: ${task.completed}`);
-  return lines.join("\n");
+/** Extract numeric ID from self URL like /v1/tasks/3000 */
+function extractId(self: string | undefined): string | null {
+  if (!self) return null;
+  const parts = self.split("/");
+  return parts[parts.length - 1] || null;
 }
 
-export function registerTaskTools(server: McpServer, client: DayliteCalDAVClient): void {
+function formatTask(t: any): string {
+  const parts: string[] = [];
+  const id = extractId(t.self);
+  if (id) parts.push(`ID: ${id}`);
+  if (t.name) parts.push(`Titel: ${t.name}`);
+  if (t.details) parts.push(`Details: ${t.details}`);
+  if (t.status) parts.push(`Status: ${t.status}`);
+  if (t.due) parts.push(`Fällig: ${t.due}`);
+  if (t.start) parts.push(`Start: ${t.start}`);
+  if (t.priority !== undefined && t.priority > 0) parts.push(`Priorität: ${t.priority}`);
+  if (t.category) parts.push(`Kategorie: ${t.category}`);
+  if (t.completed) parts.push(`Erledigt am: ${t.completed}`);
+  // Contacts
+  if (t.contacts?.length > 0) {
+    parts.push(`Kontakte: ${t.contacts.map((co: any) => `${co.contact} (${co.role || ""})`).join(", ")}`);
+  }
+  // Companies
+  if (t.companies?.length > 0) {
+    parts.push(`Firmen: ${t.companies.map((co: any) => `${co.company} (${co.role || ""})`).join(", ")}`);
+  }
+  // Keywords
+  if (t.keywords?.length > 0) {
+    parts.push(`Schlagwörter: ${t.keywords.join(", ")}`);
+  }
+  if (t.flagged) parts.push(`Markiert`);
+  if (t.owner) parts.push(`Besitzer: ${t.owner}`);
+  return parts.join("\n");
+}
+
+export function registerTaskTools(server: McpServer, client: DayliteRestClient): void {
   server.tool(
     "daylite_list_tasks",
     "Liste alle Tasks/Aufgaben aus Daylite auf.",
     {
       calendar: z.string().optional().describe("Name des Kalenders (optional, nutzt Standard-Kalender wenn leer)"),
     },
-    async (args) => {
+    async () => {
       try {
-        const tasks = await client.listTasks({ calendarName: args.calendar });
+        const params: Record<string, string> = { limit: "200" };
+        const data = await client.get("/tasks", params);
+        const tasks = Array.isArray(data) ? data : data?.data || [];
 
         if (tasks.length === 0) {
           return { content: [{ type: "text", text: "Keine Tasks gefunden." }] };
         }
 
-        const formatted = tasks.map(formatTask).join("\n\n---\n\n");
-        return { content: [{ type: "text", text: `${tasks.length} Tasks gefunden:\n\n${formatted}` }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        const text = tasks.map(formatTask).join("\n\n---\n\n");
+        return { content: [{ type: "text", text: `${tasks.length} Tasks gefunden:\n\n${text}` }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
@@ -67,17 +67,15 @@ export function registerTaskTools(server: McpServer, client: DayliteCalDAVClient
     "daylite_get_task",
     "Rufe einen einzelnen Daylite-Task per URL ab.",
     {
-      url: z.string().describe("Die CalDAV-URL des Tasks (aus daylite_list_tasks)"),
+      url: z.string().describe("Die ID des Tasks (aus daylite_list_tasks)"),
     },
-    async (args) => {
+    async ({ url }) => {
       try {
-        const task = await client.getTask(args.url);
-        if (!task) {
-          return { content: [{ type: "text", text: "Task nicht gefunden." }] };
-        }
-        return { content: [{ type: "text", text: formatTask(task) }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        const id = url.match(/\d+$/)?.[0] || url;
+        const data = await client.get(`/tasks/${id}`);
+        return { content: [{ type: "text", text: formatTask(data) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
@@ -92,18 +90,16 @@ export function registerTaskTools(server: McpServer, client: DayliteCalDAVClient
       priority: z.number().min(0).max(9).optional().describe("Priorität (1=höchste, 5=mittel, 9=niedrigste, 0=nicht definiert)"),
       calendar: z.string().optional().describe("Name des Kalenders (optional)"),
     },
-    async (args) => {
+    async ({ summary, description, due, priority }) => {
       try {
-        const uid = await client.createTask({
-          calendarName: args.calendar,
-          summary: args.summary,
-          description: args.description,
-          due: args.due,
-          priority: args.priority,
-        });
-        return { content: [{ type: "text", text: `Task erstellt: "${args.summary}" (UID: ${uid})` }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        const body: any = { name: summary };
+        if (description) body.details = description;
+        if (due) body.due = due;
+        if (priority !== undefined) body.priority = priority;
+        const data = await client.post("/tasks", body);
+        return { content: [{ type: "text", text: `Task erstellt:\n${formatTask(data)}` }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
@@ -112,28 +108,29 @@ export function registerTaskTools(server: McpServer, client: DayliteCalDAVClient
     "daylite_update_task",
     "Aktualisiere einen bestehenden Daylite-Task.",
     {
-      url: z.string().describe("Die CalDAV-URL des Tasks (aus daylite_list_tasks)"),
+      url: z.string().describe("Die ID des Tasks (aus daylite_list_tasks)"),
       summary: z.string().optional().describe("Neuer Titel"),
       description: z.string().optional().describe("Neue Beschreibung"),
       due: z.string().optional().describe("Neues Fälligkeitsdatum (ISO 8601)"),
       priority: z.number().min(0).max(9).optional().describe("Neue Priorität (1=höchste, 5=mittel, 9=niedrigste)"),
-      status: z.enum(["NEEDS-ACTION", "IN-PROCESS", "COMPLETED", "CANCELLED"]).optional().describe("Neuer Status"),
+      status: z.string().optional().describe("Neuer Status"),
       completed: z.boolean().optional().describe("Task als erledigt markieren (true)"),
     },
-    async (args) => {
+    async ({ url, summary, description, due, priority, status, completed }) => {
       try {
-        await client.updateTask({
-          url: args.url,
-          summary: args.summary,
-          description: args.description,
-          due: args.due,
-          priority: args.priority,
-          status: args.status,
-          completed: args.completed,
-        });
-        return { content: [{ type: "text", text: `Task aktualisiert.` }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        const id = url.match(/\d+$/)?.[0] || url;
+        const body: any = {};
+        if (summary) body.name = summary;
+        if (description) body.details = description;
+        if (due) body.due = due;
+        if (priority !== undefined) body.priority = priority;
+        if (status) body.status = status;
+        if (completed) body.completed = new Date().toISOString();
+        await client.patch(`/tasks/${id}`, body);
+        const updated = await client.get(`/tasks/${id}`);
+        return { content: [{ type: "text", text: `Task aktualisiert:\n${formatTask(updated)}` }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );
@@ -142,14 +139,15 @@ export function registerTaskTools(server: McpServer, client: DayliteCalDAVClient
     "daylite_delete_task",
     "Lösche einen Task aus Daylite.",
     {
-      url: z.string().describe("Die CalDAV-URL des Tasks (aus daylite_list_tasks)"),
+      url: z.string().describe("Die ID des Tasks (aus daylite_list_tasks)"),
     },
-    async (args) => {
+    async ({ url }) => {
       try {
-        await client.deleteTask(args.url);
+        const id = url.match(/\d+$/)?.[0] || url;
+        await client.delete(`/tasks/${id}`);
         return { content: [{ type: "text", text: "Task gelöscht." }] };
-      } catch (error) {
-        return { content: [{ type: "text", text: `Fehler: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Fehler: ${error.message}` }], isError: true };
       }
     }
   );

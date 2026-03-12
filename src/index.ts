@@ -2,7 +2,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { DayliteCalDAVClient } from "./daylite-client.js";
 import { DayliteRestClient } from "./daylite-rest-client.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerAppointmentTools } from "./tools/appointments.js";
@@ -12,76 +11,44 @@ import { registerOpportunityTools } from "./tools/opportunities.js";
 import { registerProjectTools } from "./tools/projects.js";
 import { registerSearchTools } from "./tools/rest-search.js";
 
-const DEFAULT_SERVER_URL = "https://caldav.marketcircle.net";
-
 function getConfig() {
-  const username = process.env.DAYLITE_USERNAME;
-  const password = process.env.DAYLITE_PASSWORD;
   const refreshToken = process.env.DAYLITE_REFRESH_TOKEN;
 
-  const hasCalDAV = !!(username && password);
-  const hasREST = !!refreshToken;
-
-  if (!hasCalDAV && !hasREST) {
+  if (!refreshToken) {
     console.error(
-      "Fehler: Keine Zugangsdaten konfiguriert.\n\n" +
-        "Für CalDAV (Tasks & Termine):\n" +
-        "  DAYLITE_USERNAME und DAYLITE_PASSWORD setzen\n\n" +
-        "Für REST API (Kontakte, Firmen, Opportunities, Projekte):\n" +
-        "  DAYLITE_REFRESH_TOKEN setzen\n\n" +
-        "Beide können gleichzeitig genutzt werden."
+      "Fehler: DAYLITE_REFRESH_TOKEN nicht gesetzt.\n\n" +
+        "Token generieren unter: https://developer.daylite.app/reference/personal-token\n" +
+        "Dann in claude_desktop_config.json als DAYLITE_REFRESH_TOKEN eintragen."
     );
     process.exit(1);
   }
 
-  return {
-    caldav: hasCalDAV
-      ? {
-          serverUrl: process.env.DAYLITE_SERVER_URL || DEFAULT_SERVER_URL,
-          username: username!,
-          password: password!,
-        }
-      : null,
-    rest: hasREST
-      ? {
-          refreshToken: refreshToken!,
-        }
-      : null,
-  };
+  return { refreshToken };
 }
 
 async function main() {
   const config = getConfig();
-  const features: string[] = [];
 
   const server = new McpServer({
     name: "daylite",
-    version: "2.0.0",
+    version: "3.0.0",
   });
 
-  // CalDAV-Tools registrieren (Tasks)
-  if (config.caldav) {
-    const caldavClient = new DayliteCalDAVClient(config.caldav);
-    registerTaskTools(server, caldavClient);
-    features.push("CalDAV (Tasks)");
-  }
+  const client = new DayliteRestClient(config);
 
-  // REST API-Tools registrieren (Termine, Kontakte, Firmen, etc.)
-  if (config.rest) {
-    const restClient = new DayliteRestClient(config.rest);
-    registerAppointmentTools(server, restClient);
-    registerContactTools(server, restClient);
-    registerCompanyTools(server, restClient);
-    registerOpportunityTools(server, restClient);
-    registerProjectTools(server, restClient);
-    registerSearchTools(server, restClient);
-    features.push("REST API (Termine, Kontakte, Firmen, Opportunities, Projekte, Suche, Pipelines)");
-  }
+  // Alle Tools registrieren
+  registerTaskTools(server, client);
+  registerAppointmentTools(server, client);
+  registerContactTools(server, client);
+  registerCompanyTools(server, client);
+  registerOpportunityTools(server, client);
+  registerProjectTools(server, client);
+  registerSearchTools(server, client);
 
   // Server über stdio starten
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Daylite MCP Server v2.0 läuft: ${features.join(" + ")}`);
+  console.error("Daylite MCP Server v3.0 läuft (REST API: Tasks, Termine, Kontakte, Firmen, Opportunities, Projekte, Suche, Pipelines)");
 }
 
 main().catch((error) => {

@@ -78,11 +78,10 @@ export function registerAppointmentTools(server: McpServer, client: DayliteRestC
     "daylite_get_appointment",
     "Rufe einen einzelnen Daylite-Termin per ID ab.",
     {
-      url: z.string().describe("Die CalDAV-URL des Termins (aus daylite_list_appointments)"),
+      url: z.string().describe("Die ID des Termins (aus daylite_list_appointments)"),
     },
     async ({ url }) => {
       try {
-        // Support both old CalDAV URLs and new numeric IDs
         const id = url.match(/\d+$/)?.[0] || url;
         const data = await client.get(`/appointments/${id}`);
         return { content: [{ type: "text", text: formatAppointment(data) }] };
@@ -126,7 +125,7 @@ export function registerAppointmentTools(server: McpServer, client: DayliteRestC
     "daylite_update_appointment",
     "Aktualisiere einen bestehenden Daylite-Termin.",
     {
-      url: z.string().describe("Die CalDAV-URL des Termins (aus daylite_list_appointments)"),
+      url: z.string().describe("Die ID des Termins (aus daylite_list_appointments)"),
       summary: z.string().optional().describe("Neuer Titel"),
       dtstart: z.string().optional().describe("Neue Startzeit (ISO 8601)"),
       dtend: z.string().optional().describe("Neue Endzeit (ISO 8601)"),
@@ -155,7 +154,7 @@ export function registerAppointmentTools(server: McpServer, client: DayliteRestC
     "daylite_delete_appointment",
     "Lösche einen Termin aus Daylite.",
     {
-      url: z.string().describe("Die CalDAV-URL des Termins (aus daylite_list_appointments)"),
+      url: z.string().describe("Die ID des Termins (aus daylite_list_appointments)"),
     },
     async ({ url }) => {
       try {
